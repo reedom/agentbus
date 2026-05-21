@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Stub MCP client smoke test exercising mcp-bus-cli against a running daemon.
+# Stub MCP client smoke test exercising agentbus-cli against a running daemon.
 # This mirrors smoke-curl.sh but routes through the Rust CLI to confirm the
 # end-to-end CLI wiring (ls / send / ask / tail / rm) is functional.
 #
 # Requires:
-#   - mcp-busd running at $MCP_BUS_URL (default http://127.0.0.1:8765)
-#   - mcp-bus-cli binary on PATH (or set MCP_BUS_CLI=/path/to/mcp-bus)
+#   - agentbusd running at $AGENTBUS_URL (default http://127.0.0.1:8765)
+#   - agentbus-cli binary on PATH (or set AGENTBUS_CLI=/path/to/agentbus)
 set -euo pipefail
 
-URL=${MCP_BUS_URL:-http://127.0.0.1:8765}
-CLI=${MCP_BUS_CLI:-mcp-bus}
+URL=${AGENTBUS_URL:-http://127.0.0.1:8765}
+CLI=${AGENTBUS_CLI:-agentbus}
 
 if ! command -v "$CLI" >/dev/null 2>&1; then
-  echo "error: mcp-bus CLI not found ('$CLI'); set MCP_BUS_CLI or add to PATH" >&2
+  echo "error: agentbus CLI not found ('$CLI'); set AGENTBUS_CLI or add to PATH" >&2
   exit 127
 fi
 

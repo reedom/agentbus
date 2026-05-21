@@ -1,4 +1,4 @@
-# mcp-bus
+# agentbus
 
 An MCP-native message bus that lets MCP-capable AI instances talk to and listen
 to other AI instances, humans, and arbitrary external programs.
@@ -11,7 +11,7 @@ to other AI instances, humans, and arbitrary external programs.
 
 ```bash
 cargo build --release
-./target/release/mcp-busd &
+./target/release/agentbusd &
 ./scripts/smoke-curl.sh
 ```
 
@@ -20,9 +20,9 @@ For Claude Code integration, add to your project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "mcp-bus": {
+    "agentbus": {
       "type": "stdio",
-      "command": "/absolute/path/to/mcp-bus-stdio"
+      "command": "/absolute/path/to/agentbus-stdio"
     }
   }
 }
@@ -41,7 +41,7 @@ For Claude Code integration, add to your project's `.mcp.json`:
 
 | Surface | Audience | Transport |
 |---|---|---|
-| MCP shim (`mcp-bus-stdio`) | MCP-capable AI clients | stdio + Unix socket |
+| MCP shim (`agentbus-stdio`) | MCP-capable AI clients | stdio + Unix socket |
 | REST (`/v1`) on `127.0.0.1` | External programs, bridges, CLI | HTTP |
 | SSE (`/v1/events`, `/v1/instances/{id}/inbox`) | Subscribers, dashboards | HTTP long-lived |
 | Hook-driven inbox | Workflows without blocking `await_message` | JSONL files |

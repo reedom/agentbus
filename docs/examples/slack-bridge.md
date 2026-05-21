@@ -1,6 +1,6 @@
 # Example: Slack bridge for human-in-the-loop `ask`
 
-This walkthrough shows how to bridge mcp-bus `ask` calls to a Slack channel
+This walkthrough shows how to bridge agentbus `ask` calls to a Slack channel
 where a human picks an answer via interactive buttons. The human's choice is
 returned as the `reply` payload, unblocking the AI's `ask`.
 
@@ -9,7 +9,7 @@ This is the concrete realization of spec section 7.3.
 ## 1. Topology
 
 ```
-AI (Claude)              mcp-busd                 Slack bridge          Slack
+AI (Claude)              agentbusd                 Slack bridge          Slack
    |                       |                          |                    |
    |--- ask("slack-ask") ->|                          |                    |
    |                       |--- envelope on inbox --->|                    |
@@ -175,7 +175,7 @@ The orchestrator's blocked `ask` returns:
 
 - Verify Slack request signatures before trusting interaction payloads.
 - Rate-limit unknown `from` instances if the bridge ever exposes posting back
-  into mcp-bus from Slack slash commands.
+  into agentbus from Slack slash commands.
 - Persist a short-lived map of `envelope_id -> slack_ts` so the bridge can edit
   the original message on reply (showing the choice and who made it).
 - Treat the registration connection as load-bearing: monitor it, restart with

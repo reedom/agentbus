@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/mcp-bus-core", "crates/mcp-busd", "crates/mcp-bus-stdio", "crates/mcp-bus-cli"]
+members = ["crates/agentbus-core", "crates/agentbusd", "crates/agentbus-stdio", "crates/agentbus-cli"]
 
 [workspace.package]
 edition = "2021"
 rust-version = "1.78"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/reedom/mcp-bus"
+repository = "https://github.com/reedom/agentbus"
 
 [workspace.dependencies]
 anyhow = "1"

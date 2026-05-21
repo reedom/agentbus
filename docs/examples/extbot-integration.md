@@ -1,7 +1,7 @@
 # Example: extbot orchestrator integration
 
 This walkthrough shows how the [extbot][extbot] orchestrator can drive a Claude
-Code instance via mcp-bus, using only the REST surface from the extbot side.
+Code instance via agentbus, using only the REST surface from the extbot side.
 
 The Claude instance registers as `extbot-<ticket>` through the MCP shim;
 extbot sends it work and observes results over HTTP.
@@ -11,7 +11,7 @@ extbot sends it work and observes results over HTTP.
 ## 1. Topology
 
 ```
-extbot                       mcp-busd                  Claude (MCP)
+extbot                       agentbusd                  Claude (MCP)
  |                            |                          |
  |                            |<-- register("extbot-ENG-123") --|
  |                            |                          |
@@ -31,7 +31,7 @@ the daemon at ingress.
 ## 2. Claude side: register
 
 When extbot launches a Claude session for ticket `ENG-123`, Claude's MCP client
-loads the `mcp-bus` server and calls `register`:
+loads the `agentbus` server and calls `register`:
 
 ```jsonc
 { "instance_id": "extbot-ENG-123", "mailbox_size": 256 }

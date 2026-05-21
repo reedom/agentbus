@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Smoke test for mcp-busd REST API using curl.
+# Smoke test for agentbusd REST API using curl.
 # Requires the daemon to be running (default http://127.0.0.1:8765).
 set -euo pipefail
 
-URL=${MCP_BUS_URL:-http://127.0.0.1:8765}
+URL=${AGENTBUS_URL:-http://127.0.0.1:8765}
 
 echo "=> register bob"
 TOKEN=$(curl -sS -X POST "$URL/v1/instances" \
@@ -29,5 +29,5 @@ wait "$TAIL_PID" || true
 
 echo "=> unregister bob"
 curl -sS -X DELETE "$URL/v1/instances/bob" \
-  -H "x-mcp-bus-owner: $TOKEN" \
+  -H "x-agentbus-owner: $TOKEN" \
   -w "%{http_code}\n"

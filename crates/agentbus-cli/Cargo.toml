@@ -1,0 +1,23 @@
+[package]
+name = "agentbus-cli"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agentbus"
+path = "src/main.rs"
+
+[dependencies]
+agentbus-core = { path = "../agentbus-core" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+futures = { workspace = true }
+eventsource-stream = { workspace = true }
+time = { workspace = true }
+urlencoding = "2"

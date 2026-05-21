@@ -1,6 +1,6 @@
 # Protocol reference
 
-This document describes the wire format used by every mcp-bus surface, the REST
+This document describes the wire format used by every agentbus surface, the REST
 endpoints exposed by the daemon, and the MCP tools exposed by the stdio shim.
 
 It mirrors sections 5, 6.5, and 6.7 of the
@@ -173,7 +173,7 @@ envelopes up to that offset, then attaches the subscriber to live broadcasts —
 no gap, no duplicate. Clients should still dedup by envelope `id` defensively
 across reconnects.
 
-## 3. MCP shim (`mcp-bus-stdio`)
+## 3. MCP shim (`agentbus-stdio`)
 
 The shim connects to the daemon's Unix socket and exposes the bus as MCP tools.
 
