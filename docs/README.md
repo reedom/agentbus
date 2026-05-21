@@ -28,6 +28,25 @@ For Claude Code integration, add to your project's `.mcp.json`:
 }
 ```
 
+No `env` block is needed: the shim and daemon both auto-resolve the socket
+to `$XDG_RUNTIME_DIR/agentbus.sock` (Linux) or `$TMPDIR/agentbus.sock`
+(macOS). Override only if you run the daemon with a custom `--socket` flag:
+
+```json
+{
+  "mcpServers": {
+    "agentbus": {
+      "type": "stdio",
+      "command": "/absolute/path/to/agentbus-stdio",
+      "env": { "AGENTBUS_SOCKET": "/your/custom/path/agentbus.sock" }
+    }
+  }
+}
+```
+
+The same `AGENTBUS_URL` / `AGENTBUS_SOCKET` env vars are honored by the
+`agentbus` CLI and any HTTP/REST consumer.
+
 ## What's here
 
 - `protocol.md` — the envelope schema, REST endpoint table, and MCP tool table,
