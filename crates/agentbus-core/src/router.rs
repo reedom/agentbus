@@ -31,6 +31,7 @@ pub struct Router {
 struct Pending {
     tx: oneshot::Sender<Result<Envelope, RouteError>>,
     to: String,
+    asker: String,
 }
 
 impl Router {
@@ -78,9 +79,17 @@ impl Router {
 
         let (tx, rx) = oneshot::channel();
         let req_id = env.id.clone();
+        let asker = env.from.clone();
         {
             let mut g = self.pending.lock().await;
-            g.insert(req_id.clone(), Pending { tx, to: to.clone() });
+            g.insert(
+                req_id.clone(),
+                Pending {
+                    tx,
+                    to: to.clone(),
+                    asker,
+                },
+            );
         }
         rec.mailbox.push(env).await;
 
@@ -97,23 +106,31 @@ impl Router {
     }
 
     /// Resolve a pending ask. Returns Err if no matching request_id.
+    ///
+    /// If `env.to` is missing, auto-fills it from the pending ask's asker
+    /// so callers do not need to remember who they are replying to.
     pub async fn reply(&self, mut env: Envelope) -> Result<(), RouteError> {
         env.id = new_envelope_id();
         env.ts = now_utc();
         env.kind = Kind::Reply;
-        env.validate()?;
         let req_id = env
             .request_id
             .clone()
             .ok_or_else(|| RouteError::UnknownRequestId(String::new()))?;
-        let pending = self.pending.lock().await.remove(&req_id);
-        match pending {
-            Some(p) => {
-                let _ = p.tx.send(Ok(env));
-                Ok(())
-            }
-            None => Err(RouteError::UnknownRequestId(req_id)),
+        let mut g = self.pending.lock().await;
+        let asker_opt = g.get(&req_id).map(|p| p.asker.clone());
+        let Some(asker) = asker_opt else {
+            return Err(RouteError::UnknownRequestId(req_id));
+        };
+        if env.to.is_none() {
+            env.to = Some(asker);
         }
+        env.validate()?;
+        // Validation passed: consume the pending entry and deliver.
+        let pending = g.remove(&req_id).expect("re-checked under same lock");
+        drop(g);
+        let _ = pending.tx.send(Ok(env));
+        Ok(())
     }
 
     /// Cancel all pending asks whose target is `instance_id`.
@@ -234,5 +251,28 @@ mod tests {
         reply.request_id = Some("nope".into());
         let err = router.reply(reply).await.unwrap_err();
         assert!(matches!(err, RouteError::UnknownRequestId(_)));
+    }
+
+    #[tokio::test]
+    async fn reply_auto_fills_to_from_pending_asker() {
+        let reg = Arc::new(Registry::new());
+        let owner = reg.issue_owner_token();
+        let bob = reg.register("bob", owner, 4).await.unwrap();
+        let router = Router::new(reg);
+
+        // Fake bob drains the ask, replies WITHOUT setting `to`.
+        let r2 = router.clone();
+        tokio::spawn(async move {
+            let req = bob.mailbox.pop().await.unwrap();
+            let mut reply = mk(Kind::Reply, "bob", None); // no `to`
+            reply.request_id = Some(req.id.clone());
+            reply.payload = json!({"ok": true});
+            r2.reply(reply).await.unwrap();
+        });
+
+        let ask = mk(Kind::Ask, "alice", Some("bob"));
+        let reply = router.ask(ask, Duration::from_secs(1)).await.unwrap();
+        assert_eq!(reply.to.as_deref(), Some("alice"));
+        assert_eq!(reply.payload, json!({"ok": true}));
     }
 }

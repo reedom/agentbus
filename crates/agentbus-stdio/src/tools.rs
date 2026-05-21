@@ -90,12 +90,13 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "reply",
-            description: "Reply to an inbound ask.",
+            description: "Reply to an inbound ask. `to` is auto-filled from the original ask's sender if omitted.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "from": {"type": "string"},
                     "request_id": {"type": "string"},
+                    "to": {"type": "string"},
                     "payload": {}
                 },
                 "required": ["from", "request_id", "payload"]
