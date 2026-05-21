@@ -3,9 +3,9 @@
 An MCP-native message bus that lets MCP-capable AI instances talk to and listen
 to other AI instances, humans, and arbitrary external programs.
 
-- Spec: [superpowers/specs/2026-05-21-mcp-bus-design.md](superpowers/specs/2026-05-21-mcp-bus-design.md)
-- Wire protocol + REST + MCP tools: [protocol.md](protocol.md)
-- Examples: [examples/](examples/)
+- Functional requirements: [fr/index.md](fr/index.md)
+- Wire protocol + REST + MCP tools: [reference/protocol.md](reference/protocol.md)
+- Examples: [reference/](reference/)
 
 ## Install (Claude Code users)
 
@@ -52,11 +52,13 @@ to `.mcp.json`:
 
 ## What's here
 
-- `protocol.md` — the envelope schema, REST endpoint table, and MCP tool table,
-  with example payloads for each surface.
-- `examples/slack-bridge.md` — how to bridge `ask` calls to a human in Slack and
+- `fr/` — functional requirement docs, one per product feature, tracked by the
+  `kusara` cross-reference graph. See `fr/README.md`.
+- `reference/protocol.md` — the envelope schema, REST endpoint table, and MCP
+  tool table, with example payloads for each surface.
+- `reference/slack-bridge.md` — how to bridge `ask` calls to a human in Slack and
   return their interactive button choice as the reply.
-- `examples/extbot-integration.md` — how an external orchestrator (`extbot`) can
+- `reference/extbot-integration.md` — how an external orchestrator (`extbot`) can
   inject events and ask questions of a Claude registered as `extbot-<ticket>`.
 - `../skills/agentbus/SKILL.md` — a Claude Code skill that teaches AI agents
   the workflow, tool-choice matrix, and gotchas for using the MCP surface.
