@@ -1,12 +1,12 @@
 ---
-description: Install the agentbus daemon and shim binaries from crates.io, then start the daemon. Use when the user invokes `/agentbus:install`, asks to "install agentbus", or when the agentbus MCP server fails to connect because no `agentbus-stdio` binary is on PATH.
+description: Install the agentbus daemon and shim binaries from crates.io, then start the daemon.
 argument-hint: "[--no-start] [--prefix <cargo-install-root>]"
 allowed-tools: Bash
 ---
 
 # /agentbus:install
 
-This is a user-invoked slash command. Follow the steps below.
+Slash command. Runs only when the user types `/agentbus:install`.
 
 ## Goal
 

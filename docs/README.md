@@ -61,8 +61,9 @@ to `.mcp.json`:
 - `../skills/agentbus/SKILL.md` — a Claude Code skill that teaches AI agents
   the workflow, tool-choice matrix, and gotchas for using the MCP surface.
   Loaded automatically by the plugin.
-- `../skills/install/SKILL.md` — the `/agentbus:install` slash command that
-  installs the daemon and shim from crates.io.
+- `../commands/install.md` — the `/agentbus:install` slash command that
+  installs the daemon and shim from crates.io. Explicit-invocation only;
+  does not auto-trigger.
 
 ## Surfaces at a glance
 
