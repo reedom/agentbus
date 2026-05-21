@@ -33,3 +33,5 @@ clap = { workspace = true }
 [dev-dependencies]
 reqwest = { workspace = true }
 tempfile = { workspace = true }
+eventsource-stream = { workspace = true }
+futures = { workspace = true }
