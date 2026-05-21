@@ -7,7 +7,28 @@ to other AI instances, humans, and arbitrary external programs.
 - Wire protocol + REST + MCP tools: [protocol.md](protocol.md)
 - Examples: [examples/](examples/)
 
-## Quickstart
+## Install (Claude Code users)
+
+Add the marketplace and install the plugin:
+
+```bash
+claude plugin marketplace add github.com/reedom/agentbus
+claude plugin install agentbus
+```
+
+Then in Claude Code, run the install slash command to fetch the daemon
+and shim binaries from crates.io and start the daemon:
+
+```
+/agentbus:install
+```
+
+That command runs `cargo install --locked agentbusd agentbus-stdio agentbus-cli`,
+verifies the binaries are on PATH, and launches `agentbusd` on
+`127.0.0.1:8765`. Restart Claude Code so the `agentbus` MCP server picks
+up the new `agentbus-stdio` binary.
+
+## Build from source (contributors)
 
 ```bash
 cargo build --release
@@ -15,7 +36,8 @@ cargo build --release
 ./scripts/smoke-curl.sh
 ```
 
-For Claude Code integration, add to your project's `.mcp.json`:
+To wire a locally built shim without using the marketplace plugin, add
+to `.mcp.json`:
 
 ```json
 {
@@ -38,7 +60,9 @@ For Claude Code integration, add to your project's `.mcp.json`:
   inject events and ask questions of a Claude registered as `extbot-<ticket>`.
 - `../skills/agentbus/SKILL.md` — a Claude Code skill that teaches AI agents
   the workflow, tool-choice matrix, and gotchas for using the MCP surface.
-  Drop it into `.claude/skills/agentbus/` to load it into a project.
+  Loaded automatically by the plugin.
+- `../skills/install/SKILL.md` — the `/agentbus:install` slash command that
+  installs the daemon and shim from crates.io.
 
 ## Surfaces at a glance
 

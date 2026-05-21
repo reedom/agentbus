@@ -1,0 +1,20 @@
+{
+  "name": "agentbus",
+  "version": "0.1.0",
+  "description": "MCP-native message bus that lets MCP-capable AI instances coordinate with other AI instances, humans, and external programs. Ships a workflow skill and an install command for the daemon and shim binaries.",
+  "author": {
+    "name": "reedom",
+    "url": "https://github.com/reedom"
+  },
+  "homepage": "https://github.com/reedom/agentbus",
+  "repository": "https://github.com/reedom/agentbus",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "mcp",
+    "messaging",
+    "agent",
+    "multi-agent",
+    "coordination",
+    "ipc"
+  ]
+}
