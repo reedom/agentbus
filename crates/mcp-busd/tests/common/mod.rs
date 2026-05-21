@@ -7,6 +7,7 @@ use mcp_busd::{config::Config, http, state::AppState};
 
 pub struct App {
     pub addr: SocketAddr,
+    pub state: AppState,
     pub _tmp: tempfile::TempDir,
 }
 
@@ -26,11 +27,15 @@ pub async fn spawn() -> App {
         .await
         .unwrap();
     let state = AppState::new(cfg, log);
-    let router = http::build_router(state);
+    let router = http::build_router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
-    App { addr, _tmp: tmp }
+    App {
+        addr,
+        state,
+        _tmp: tmp,
+    }
 }

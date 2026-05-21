@@ -9,6 +9,7 @@ use serde_json::json;
 use crate::state::AppState;
 
 pub mod instances;
+pub mod messages;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -18,6 +19,11 @@ pub fn build_router(state: AppState) -> Router {
             post(instances::register).get(instances::list),
         )
         .route("/v1/instances/:id", delete(instances::unregister))
+        .route(
+            "/v1/instances/:id/messages",
+            post(messages::send_message),
+        )
+        .route("/v1/instances/:id/replies", post(messages::send_reply))
         .with_state(state)
 }
 
