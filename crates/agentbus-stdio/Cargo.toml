@@ -1,9 +1,13 @@
 [package]
 name = "agentbus-stdio"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+description = "stdio MCP bridge for agentbus, exposing the message bus as MCP tools."
 
 [lib]
 name = "agentbus_stdio"
@@ -14,7 +18,7 @@ name = "agentbus-stdio"
 path = "src/main.rs"
 
 [dependencies]
-agentbus-core = { path = "../agentbus-core" }
+agentbus-core = { path = "../agentbus-core", version = "0.1.0" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

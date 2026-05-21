@@ -1,9 +1,13 @@
 [package]
 name = "agentbusd"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+description = "agentbus daemon: HTTP/REST and SSE message bus server for MCP-capable AI agents."
 
 [lib]
 name = "agentbusd"
@@ -14,7 +18,7 @@ name = "agentbusd"
 path = "src/main.rs"
 
 [dependencies]
-agentbus-core = { path = "../agentbus-core" }
+agentbus-core = { path = "../agentbus-core", version = "0.1.0" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

@@ -3,10 +3,13 @@ resolver = "2"
 members = ["crates/agentbus-core", "crates/agentbusd", "crates/agentbus-stdio", "crates/agentbus-cli"]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/reedom/agentbus"
+homepage = "https://github.com/reedom/agentbus"
+keywords = ["mcp", "ai", "agents", "message-bus"]
 
 [workspace.dependencies]
 anyhow = "1"
