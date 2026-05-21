@@ -17,7 +17,15 @@ async fn main() -> anyhow::Result<()> {
 
     let log = EventLog::open(cfg.resolved_log_path(), cfg.max_payload).await?;
     let app = state::AppState::new_async(cfg.clone(), log).await?;
-    let router = http::build_router(app);
+    let router = http::build_router(app.clone());
+
+    let ipc_path = cfg.resolved_socket();
+    let ipc_state = app.clone();
+    tokio::spawn(async move {
+        if let Err(e) = mcp_busd::ipc::serve(ipc_state, ipc_path).await {
+            tracing::error!(error = %e, "ipc serve failed");
+        }
+    });
 
     let addr = SocketAddr::new(cfg.bind, cfg.port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
