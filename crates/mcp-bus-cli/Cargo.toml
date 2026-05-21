@@ -20,3 +20,4 @@ reqwest = { workspace = true }
 futures = { workspace = true }
 eventsource-stream = { workspace = true }
 time = { workspace = true }
+urlencoding = "2"
