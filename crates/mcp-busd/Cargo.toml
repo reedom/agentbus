@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "mcp_busd"
+path = "src/lib.rs"
+
 [[bin]]
 name = "mcp-busd"
 path = "src/main.rs"
@@ -25,3 +29,7 @@ futures = { workspace = true }
 ulid = { workspace = true }
 time = { workspace = true }
 clap = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tempfile = { workspace = true }

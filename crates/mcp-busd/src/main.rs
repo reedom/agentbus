@@ -1,9 +1,7 @@
-mod config;
-mod shutdown;
-mod state;
-
 use clap::Parser;
 use mcp_bus_core::eventlog::EventLog;
+use mcp_busd::{config, http, shutdown, state};
+use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -18,14 +16,16 @@ async fn main() -> anyhow::Result<()> {
     cfg.validate()?;
 
     let log = EventLog::open(cfg.resolved_log_path(), cfg.max_payload).await?;
-    let _app = state::AppState::new(cfg.clone(), log);
+    let app = state::AppState::new(cfg.clone(), log);
+    let router = http::build_router(app);
 
-    tracing::info!(
-        addr = %cfg.bind,
-        port = cfg.port,
-        "mcp-busd starting (HTTP server attaches in later task)"
-    );
-    shutdown::wait_for_shutdown().await;
+    let addr = SocketAddr::new(cfg.bind, cfg.port);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!(%addr, "mcp-busd listening");
+
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown::wait_for_shutdown())
+        .await?;
     tracing::info!("mcp-busd exiting");
     Ok(())
 }
