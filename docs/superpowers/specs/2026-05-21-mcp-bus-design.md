@@ -3,7 +3,7 @@
 - Date: 2026-05-21
 - Status: approved (brainstorm complete; implementation plan TBD)
 - Working repository: `github.com/reedom/claude-comm` (will be renamed to `mcp-bus`)
-- Origin: extracted and generalized from the `session-state` MCP in `github.com/reedom/agentbus` (`mcp-server/pkg/events`)
+- Origin: extracted and generalized from a prior MCP design for managing AI session state and events
 
 ## 1. Goal
 
@@ -25,7 +25,7 @@ Bidirectional in both directions: AI → external (events, asks) and external �
 
 ### 1.2 Originating use case
 
-`github.com/reedom/extbot` is a Rust workflow daemon that drives Claude Code subprocesses through phase transitions (orchestrator session ↔ phase subprocesses) using stdin/stdout JSON. It needs a generic way to deliver events to the orchestrator Claude and receive responses. Rather than build a extbot-only IPC, we extract a general-purpose MCP-based bus so any project with similar needs can reuse it.
+External workflow daemons that drive Claude Code subprocesses through phase transitions (orchestrator session ↔ phase subprocesses) using stdin/stdout JSON need a generic way to deliver events to the orchestrator Claude and receive responses. Rather than build a project-specific IPC, we extract a general-purpose MCP-based bus so any project with similar needs can reuse it.
 
 ## 2. Glossary
 
@@ -42,7 +42,7 @@ Bidirectional in both directions: AI → external (events, asks) and external �
                    ┌────────────────────────────────────────────────┐
                    │  mcp-busd  (long-running daemon, per host)     │
                    │  - InstanceRegistry (by ID)                    │
-   extbot / scripts ─┤  - MessageRouter                               ├─→ SSE clients
+   extbot/scripts ─┤  - MessageRouter                               ├─→ SSE clients
    curl / bridges  │  - JSONL EventLog (persistence + replay)       │
    webhooks        │  - REST :PORT (127.0.0.1)  +  SSE /events      │
                    │  - Per-instance mailboxes                      │
@@ -84,7 +84,7 @@ Bidirectional in both directions: AI → external (events, asks) and external �
 - IDs: `ulid` (sortable; readable; collision-safe).
 - Logging: `tracing` + `tracing-subscriber`.
 
-Choice rationale: extbot is Rust; unified toolchain. `axum` + `rmcp` are mature. Single static binary distribution.
+Choice rationale: the surrounding orchestrator ecosystem is Rust; unified toolchain. `axum` + `rmcp` are mature. Single static binary distribution.
 
 ## 5. Wire format — the envelope
 
@@ -356,7 +356,7 @@ mcp-bus/
 │  └─ mcp-bus-cli/               # CLI binary
 ├─ scripts/
 │  ├─ smoke-curl.sh
-│  ├─ smoke-extbot.sh              # exercises with a stub MCP client
+│  ├─ smoke-extbot.sh            # exercises with a stub MCP client
 │  └─ inject-inbox.sh            # reference hook for option 3
 ├─ docs/
 │  ├─ README.md
@@ -400,7 +400,7 @@ mcp-bus/
 ### 11.5 Manual smoke
 
 - `scripts/smoke-curl.sh` — bash + curl reproduces the REST flow end-to-end.
-- `scripts/smoke-extbot.sh` — exercises the extbot orchestrator → mcp-bus path with a stub MCP client.
+- `scripts/smoke-extbot.sh` — exercises the external-bot orchestrator → mcp-bus path with a stub MCP client.
 
 ### 11.6 CI
 
