@@ -54,6 +54,7 @@ impl EventLog {
         line.push(b'\n');
         let mut w = self.writer.lock().await;
         w.write_all(&line).await?;
+        w.flush().await?;
         Ok(())
     }
 

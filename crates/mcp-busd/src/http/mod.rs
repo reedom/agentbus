@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::state::AppState;
 
+pub mod ask;
 pub mod instances;
 pub mod messages;
 
@@ -24,6 +25,7 @@ pub fn build_router(state: AppState) -> Router {
             post(messages::send_message),
         )
         .route("/v1/instances/:id/replies", post(messages::send_reply))
+        .route("/v1/instances/:id/ask", post(ask::ask))
         .with_state(state)
 }
 
