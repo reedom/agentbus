@@ -36,6 +36,9 @@ For Claude Code integration, add to your project's `.mcp.json`:
   return their interactive button choice as the reply.
 - `examples/extbot-integration.md` — how an external orchestrator (`extbot`) can
   inject events and ask questions of a Claude registered as `extbot-<ticket>`.
+- `../skills/agentbus/SKILL.md` — a Claude Code skill that teaches AI agents
+  the workflow, tool-choice matrix, and gotchas for using the MCP surface.
+  Drop it into `.claude/skills/agentbus/` to load it into a project.
 
 ## Surfaces at a glance
 
