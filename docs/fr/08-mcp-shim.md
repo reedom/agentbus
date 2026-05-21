@@ -72,9 +72,11 @@ The shim exposes these MCP tools:
 ## Error Handling
 
 - Daemon unavailable (spec §8.1): the shim reconnects with backoff for 5 s.
-  After that, every tool call returns `{code: "daemon_unavailable",
-  retryable: true}` immediately. The shim never panics or exits, so the MCP
-  client stays up.
+  After that, every tool call returns a JSON-RPC error
+  `{"code": -32000, "message": "daemon_unavailable", "data": <detail>}`
+  immediately — `code` is the numeric JSON-RPC code, `daemon_unavailable` is
+  the `message`, and there is no `retryable` field. The shim never panics or
+  exits, so the MCP client stays up.
 
 ## Traceability
 

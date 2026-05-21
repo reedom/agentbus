@@ -41,11 +41,14 @@ posture, and how it shuts down cleanly.
   | `AGENTBUS_INBOX_DIR` | `$XDG_RUNTIME_DIR/agentbus/inbox` | hook-injection inbox directory |
   | `AGENTBUS_DEFAULT_TIMEOUT_MS` | `30000` | default `ask` timeout |
   | `AGENTBUS_MAX_TIMEOUT_MS` | `86400000` | maximum allowed `ask` timeout (24 h) |
-  | `RUST_LOG` | `info,agentbus=debug` | tracing filter |
+  | `RUST_LOG` | `info` | tracing filter |
 
 - The daemon binds HTTP only to `127.0.0.1` and the Unix socket with `0600`
   permissions. It refuses to start when `--bind` names a non-loopback address.
-- On `SIGTERM` the daemon shuts down gracefully.
+- On `SIGTERM` or `SIGINT` the daemon shuts down gracefully: the signal
+  triggers `axum`'s graceful-shutdown path, which stops accepting new
+  connections and lets already-accepted in-flight requests finish before the
+  process exits.
 
 ## Capabilities
 
@@ -54,7 +57,8 @@ posture, and how it shuts down cleanly.
 - Loopback-only network exposure and `0600` socket permissions by default.
 - A startup guard that refuses non-loopback binds.
 - An ingress payload cap that bounds per-line log size and per-event memory.
-- Graceful, bounded-drain shutdown that notifies SSE subscribers.
+- Signal-triggered graceful shutdown via `axum` — new connections stop, and
+  in-flight requests are allowed to finish.
 
 ## Boundaries
 
@@ -67,6 +71,11 @@ posture, and how it shuts down cleanly.
   (spec §1.1).
 - Component behavior (routing, mailboxes, SSE) is owned by the respective FRs;
   this FR owns only process lifecycle, config, and security posture.
+- Spec §8.11 intended graceful shutdown to drain in-flight RPCs under a bounded
+  budget (up to 5 s), `fsync` the JSONL event log, and send an
+  `event: shutdown` SSE notification to subscribers; none of these are
+  implemented. Shutdown is the plain `axum` graceful-shutdown behavior with no
+  explicit drain budget, no log `fsync`, and no shutdown broadcast.
 
 ## Error Handling
 
@@ -75,10 +84,11 @@ posture, and how it shuts down cleanly.
 - Non-loopback bind refusal (spec §8.10): the daemon refuses to start when
   `--bind` is a non-loopback address, and the error message points at the
   future auth/TLS work.
-- Graceful shutdown (spec §8.11): on `SIGTERM` the daemon stops accepting new
-  connections, drains in-flight RPCs for up to 5 s, `fsync`s the JSONL log,
-  sends `event: shutdown\ndata: {}` to SSE subscribers, closes listeners, and
-  exits.
+- Graceful shutdown (spec §8.11): on `SIGTERM` or `SIGINT` the daemon hands off
+  to `axum`'s graceful-shutdown path — it stops accepting new connections,
+  lets in-flight requests finish, then exits. There is no bounded RPC-drain
+  budget, no JSONL `fsync`, and no `shutdown` SSE notification (see Boundaries
+  for the unimplemented spec §8.11 intent).
 
 ## Traceability
 

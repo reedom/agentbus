@@ -68,6 +68,12 @@ All endpoints are versioned under `/v1` and bound to `127.0.0.1`:
 - The API does not interpret `payload`; it only frames envelopes.
 - SSE streaming semantics (replay, slow-subscriber handling) belong to
   fr:07-sse, not this FR.
+- `GET /v1/instances/{id}/inbox` does only a registry lookup: `404
+  unknown_instance` if the instance is absent, otherwise it streams the
+  mailbox to any local caller. Spec §6.5 intended an owner-only check
+  returning `403`; the current implementation does not do this — any local
+  caller can read any instance's inbox (consistent with the v1 loopback-only,
+  no-auth posture).
 - Registry and routing logic are delegated to fr:02-instance-registry and
   fr:04-router; this FR owns only the HTTP surface.
 
@@ -76,9 +82,10 @@ All endpoints are versioned under `/v1` and bound to `127.0.0.1`:
 - `ask` timeout: `POST /v1/instances/{id}/ask` returns `504` with body
   `{error: "timeout", request_id}` when `timeout_ms` elapses (spec §7.2,
   §8.5; owned by fr:04-router).
-- Inbox ownership: `GET /v1/instances/{id}/inbox` requires the caller to be the
-  registered owner, matched by connection; a different connection requesting
-  another instance's inbox returns `403` (spec §6.5).
+- Unknown inbox instance: `GET /v1/instances/{id}/inbox` looks `{id}` up in the
+  registry and returns `404 unknown_instance` if it is absent; otherwise it
+  streams the mailbox without any caller-authorization check (see Boundaries
+  for the unimplemented spec §6.5 owner-only `403`).
 - Registration collision surfaces the registry's `instance_id_taken` (spec
   §8.2, fr:02-instance-registry).
 

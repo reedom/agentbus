@@ -23,14 +23,16 @@ growing daemon memory without limit.
 
 ## User-visible Behavior
 
-- The mailbox is a bounded `tokio::sync::mpsc` channel, default capacity 256,
-  configurable per instance at registration time via `mailbox_size`.
+- The mailbox is a bounded in-memory queue (`VecDeque` guarded by a mutex),
+  default capacity 256, configurable per instance at registration time via
+  `mailbox_size`.
 - Delivered envelopes preserve FIFO order.
-- On overflow, the mailbox drops the *oldest* queued envelope to make room for
-  the new one, then emits a synthetic broadcast `event`
-  `{type: "dropped", instance_id, dropped_id}` so observers can see the loss.
+- On overflow, the mailbox evicts the *oldest* queued envelope to make room for
+  the new one. The push call returns the evicted envelope's id to the caller
+  (`Pushed { dropped: Some(id) }`); the eviction is not otherwise observable.
 - On auto-unregister the mailbox is closed; any blocked `await_message` on it
-  resolves with `instance_closed`.
+  resolves with a closed error (`RecvError::Closed`, message `"mailbox closed"`)
+  rather than hanging.
 - A consumer drains the mailbox either by blocking (`await_message`) or by a
   non-blocking drain (`check_inbox`) — see fr:08-mcp-shim and fr:07-sse.
 
@@ -38,8 +40,8 @@ growing daemon memory without limit.
 
 - Bounded memory per instance — overflow can never grow the queue.
 - FIFO ordering for every envelope that is actually delivered.
-- Loss is observable: every drop emits exactly one `dropped` event naming the
-  instance and the dropped envelope's id.
+- The evicted envelope's id is returned to the caller of `push`, so the
+  enqueueing path can observe which id was dropped.
 - Per-instance capacity tuning at registration for instances with bursty or
   slow consumers.
 - Clean close semantics so consumers learn promptly when their mailbox ends.
@@ -53,14 +55,20 @@ growing daemon memory without limit.
   (routing is fr:04-router).
 - It does not apply per-message priority — strictly FIFO with oldest-drop.
 - `event` envelopes are not mailboxed; they go to SSE subscribers only.
+- Spec §8.4 intended overflow to emit an observable synthetic broadcast
+  `event {type: "dropped", instance_id, dropped_id}`; the current
+  implementation does not do this — the eviction is silent to observers and the
+  evicted id is only returned to the caller of `push`.
 
 ## Error Handling
 
-- Mailbox overflow (spec §8.4): drop the oldest queued envelope and emit one
-  `{kind: "event", payload: {type: "dropped", instance_id, dropped_id}}` per
-  drop. Capacity is configurable at `register`; default 256.
-- Mailbox close: a closed mailbox resolves a blocked `await_message` with
-  `instance_closed` rather than hanging.
+- Mailbox overflow (spec §8.4): evict the oldest queued envelope and return its
+  id to the caller of `push` (`Pushed { dropped: Some(id) }`). Capacity is
+  configurable at `register`; default 256. See Boundaries for the unimplemented
+  synthetic `dropped` event.
+- Mailbox close: a closed mailbox resolves a blocked `await_message` with a
+  closed error (`RecvError::Closed`, message `"mailbox closed"`) rather than
+  hanging.
 
 ## Traceability
 
@@ -69,6 +77,6 @@ growing daemon memory without limit.
 ## When to update
 
 - The default mailbox capacity or the overflow policy changes.
-- The `dropped` event shape changes.
+- The eviction-id reporting (or a synthetic `dropped` event) changes.
 - The close behavior or its surfaced error changes.
 - The mailbox gains persistence or delivery guarantees.
