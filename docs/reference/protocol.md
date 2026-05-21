@@ -1,3 +1,10 @@
+---
+refs:
+  id: ref:protocol
+  kind: reference
+  title: "Wire protocol, REST endpoints, and MCP tool surface"
+---
+
 # Protocol reference
 
 This document describes the wire format used by every agentbus surface, the REST

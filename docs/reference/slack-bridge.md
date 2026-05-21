@@ -1,3 +1,12 @@
+---
+refs:
+  id: ref:slack-bridge
+  kind: reference
+  title: "Slack bridge integration example"
+  related:
+    - ref:protocol
+---
+
 # Example: Slack bridge for human-in-the-loop `ask`
 
 This walkthrough shows how to bridge agentbus `ask` calls to a Slack channel
