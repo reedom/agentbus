@@ -26,7 +26,7 @@ pub async fn spawn() -> App {
     let log = EventLog::open(cfg.resolved_log_path(), cfg.max_payload)
         .await
         .unwrap();
-    let state = AppState::new(cfg, log);
+    let state = AppState::new_async(cfg, log).await.unwrap();
     let router = http::build_router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

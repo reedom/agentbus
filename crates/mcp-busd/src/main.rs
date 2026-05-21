@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     cfg.validate()?;
 
     let log = EventLog::open(cfg.resolved_log_path(), cfg.max_payload).await?;
-    let app = state::AppState::new(cfg.clone(), log);
+    let app = state::AppState::new_async(cfg.clone(), log).await?;
     let router = http::build_router(app);
 
     let addr = SocketAddr::new(cfg.bind, cfg.port);

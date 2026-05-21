@@ -38,6 +38,10 @@ pub async fn send_message(
     match state.router.send(env.clone()).await {
         Ok(id) => {
             let _ = state.log.append(&env).await;
+            let _ = state
+                .hookinbox
+                .write_for(env.to.as_deref().unwrap_or(""), &env)
+                .await;
             let _ = state.broadcast_tx.send(env);
             (StatusCode::ACCEPTED, Json(json!({ "id": id }))).into_response()
         }

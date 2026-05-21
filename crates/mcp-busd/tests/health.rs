@@ -28,7 +28,7 @@ async fn mcp_busd_test_helper() -> SocketAddr {
     let log = EventLog::open(cfg.resolved_log_path(), cfg.max_payload)
         .await
         .unwrap();
-    let app = AppState::new(cfg.clone(), log);
+    let app = AppState::new_async(cfg.clone(), log).await.unwrap();
     let router = http::build_router(app);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
