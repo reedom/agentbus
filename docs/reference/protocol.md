@@ -10,9 +10,10 @@ refs:
 This document describes the wire format used by every agentbus surface, the REST
 endpoints exposed by the daemon, and the MCP tools exposed by the stdio shim.
 
-It mirrors sections 5, 6.5, and 6.7 of the
-[design spec](superpowers/specs/2026-05-21-mcp-bus-design.md) with example
-payloads added for each surface.
+It is the protocol companion to the functional requirements under
+[`../fr/`](../fr/index.md) — see `fr:01-envelope`, `fr:06-rest-api`, and
+`fr:08-mcp-shim` for the design of record; this doc adds example payloads for
+each surface.
 
 ## 1. The envelope
 
