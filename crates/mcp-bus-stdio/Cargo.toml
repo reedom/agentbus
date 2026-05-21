@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "mcp_bus_stdio"
+path = "src/lib.rs"
+
 [[bin]]
 name = "mcp-bus-stdio"
 path = "src/main.rs"
@@ -19,3 +23,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 futures = { workspace = true }
+
+[dev-dependencies]
+mcp-busd = { path = "../mcp-busd" }
+mcp-bus-core = { path = "../mcp-bus-core" }
+tempfile = { workspace = true }
