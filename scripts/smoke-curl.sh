@@ -13,7 +13,9 @@ TOKEN=$(curl -sS -X POST "$URL/v1/instances" \
 echo "owner_token=$TOKEN"
 
 echo "=> tail bob's inbox in background"
-( curl -N "$URL/v1/instances/bob/inbox" | head -n 3 ) &
+# Subshell disables pipefail so curl exiting 23 on head's SIGPIPE
+# (after 3 SSE lines) does not fail the whole script.
+( set +o pipefail; curl -sN "$URL/v1/instances/bob/inbox" 2>/dev/null | head -n 3 ) &
 TAIL_PID=$!
 sleep 0.2
 
