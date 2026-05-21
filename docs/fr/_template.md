@@ -1,3 +1,10 @@
+# FR template
+
+Copy the sections below into `NN-<slug>.md`. Start the new file with real
+`refs:` frontmatter of this shape (delete the example fence — the frontmatter
+must be the first thing in the file, `---` delimited):
+
+```yaml
 ---
 refs:
   id: fr:NN-<slug>
@@ -6,7 +13,10 @@ refs:
   related:
     - fr:XX-other
   modules:
-    - crates/.../foo.rs
+    - crates/agentbus-core/src/foo.rs
+---
+```
+
 ---
 
 # FR NN: <feature name>
