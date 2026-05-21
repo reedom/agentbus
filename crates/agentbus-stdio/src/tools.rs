@@ -120,7 +120,55 @@ pub fn specs() -> Vec<ToolSpec> {
 pub async fn call(
     client: &Arc<UdsClient>,
     name: &str,
-    args: serde_json::Value,
+    mut args: serde_json::Value,
 ) -> Result<serde_json::Value, ClientError> {
+    // Some MCP clients serialize permissive ({} schema) fields as JSON
+    // strings instead of native values. Auto-parse so the daemon stores
+    // payload as the structured value it represents.
+    normalize_json_string_field(&mut args, "payload");
     client.call(name, args).await
+}
+
+fn normalize_json_string_field(args: &mut serde_json::Value, key: &str) {
+    let Some(obj) = args.as_object_mut() else { return };
+    let Some(field) = obj.get_mut(key) else { return };
+    if let Some(s) = field.as_str() {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
+            *field = parsed;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn normalize_replaces_json_string_with_parsed_value() {
+        let mut args = json!({"payload": "{\"text\":\"hi\"}"});
+        normalize_json_string_field(&mut args, "payload");
+        assert_eq!(args["payload"], json!({"text": "hi"}));
+    }
+
+    #[test]
+    fn normalize_keeps_non_json_string_as_is() {
+        let mut args = json!({"payload": "plain text"});
+        normalize_json_string_field(&mut args, "payload");
+        assert_eq!(args["payload"], json!("plain text"));
+    }
+
+    #[test]
+    fn normalize_keeps_native_object_unchanged() {
+        let mut args = json!({"payload": {"text": "hi"}});
+        normalize_json_string_field(&mut args, "payload");
+        assert_eq!(args["payload"], json!({"text": "hi"}));
+    }
+
+    #[test]
+    fn normalize_no_field_is_noop() {
+        let mut args = json!({"other": 1});
+        normalize_json_string_field(&mut args, "payload");
+        assert_eq!(args, json!({"other": 1}));
+    }
 }
