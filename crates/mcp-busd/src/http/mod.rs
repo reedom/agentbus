@@ -9,6 +9,7 @@ use serde_json::json;
 use crate::state::AppState;
 
 pub mod ask;
+pub mod events;
 pub mod inbox;
 pub mod instances;
 pub mod messages;
@@ -28,6 +29,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/instances/:id/replies", post(messages::send_reply))
         .route("/v1/instances/:id/inbox", get(inbox::inbox))
         .route("/v1/instances/:id/ask", post(ask::ask))
+        .route("/v1/events", get(events::events).post(events::publish))
         .with_state(state)
 }
 

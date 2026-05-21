@@ -26,6 +26,7 @@ axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 futures = { workspace = true }
+async-stream = "0.3"
 ulid = { workspace = true }
 time = { workspace = true }
 clap = { workspace = true }
