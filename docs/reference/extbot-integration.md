@@ -1,3 +1,12 @@
+---
+refs:
+  id: ref:extbot-integration
+  kind: reference
+  title: "External orchestrator (extbot) integration example"
+  related:
+    - ref:protocol
+---
+
 # Example: extbot orchestrator integration
 
 This walkthrough shows how the [extbot][extbot] orchestrator can drive a Claude
