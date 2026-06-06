@@ -3,10 +3,12 @@
 //! is performed by the calling process.
 
 mod error;
+mod instances;
 mod liveness;
 mod paths;
 
 pub use error::StoreError;
+pub use instances::{InstanceRow, RegisterOpts};
 pub use paths::base_dir;
 
 use std::path::{Path, PathBuf};
@@ -72,7 +74,6 @@ impl Store {
     /// All bus.db mutations run inside one BEGIN IMMEDIATE transaction per
     /// operation (spec 5.2). WAL serializes writers; busy_timeout absorbs
     /// contention.
-    #[allow(dead_code)] // used from Task 2 onward
     fn with_tx<T>(
         &mut self,
         f: impl FnOnce(&Transaction) -> Result<T, StoreError>,
@@ -87,7 +88,7 @@ impl Store {
 }
 
 /// Stamp id and ts (spec 6.2): senders assign both.
-#[allow(dead_code)] // used from Task 2 onward
+#[allow(dead_code)] // used from Task 3 onward
 pub(crate) fn new_envelope(
     kind: Kind,
     from: &str,
@@ -106,7 +107,6 @@ pub(crate) fn new_envelope(
     }
 }
 
-#[allow(dead_code)] // used from Task 2 onward
 pub(crate) fn rfc3339(ts: &time::OffsetDateTime) -> String {
     ts.format(&time::format_description::well_known::Rfc3339)
         .expect("UTC timestamps format")
@@ -114,7 +114,7 @@ pub(crate) fn rfc3339(ts: &time::OffsetDateTime) -> String {
 
 /// Append one envelope to event_log; seq is assigned transactionally and is
 /// therefore immune to wall-clock skew between writer processes (spec 5.1).
-#[allow(dead_code)] // used from Task 2 onward
+#[allow(dead_code)] // used from Task 3 onward
 pub(crate) fn append_event(tx: &Transaction, env: &Envelope) -> Result<i64, StoreError> {
     tx.execute(
         "INSERT INTO event_log (ts, envelope) VALUES (?1, ?2)",

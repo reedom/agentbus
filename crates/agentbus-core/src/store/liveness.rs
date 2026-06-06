@@ -1,7 +1,6 @@
 //! Pid liveness (spec section 4): same-machine assumption makes
 //! kill(pid, 0) an honest check. EPERM means "exists, not ours" -> alive.
 
-#[allow(dead_code)] // used from Task 2 onward
 pub fn pid_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
