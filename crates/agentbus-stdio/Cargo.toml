@@ -9,26 +9,16 @@ homepage.workspace = true
 keywords.workspace = true
 description = "stdio MCP bridge for agentbus, exposing the message bus as MCP tools."
 
-[lib]
-name = "agentbus_stdio"
-path = "src/lib.rs"
-
 [[bin]]
 name = "agentbus-stdio"
 path = "src/main.rs"
 
 [dependencies]
-agentbus-core = { path = "../agentbus-core", version = "0.1.0" }
+agentbus-core = { version = "0.1.0", path = "../agentbus-core" }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-futures = { workspace = true }
 
 [dev-dependencies]
-agentbusd = { path = "../agentbusd" }
-agentbus-core = { path = "../agentbus-core" }
 tempfile = { workspace = true }
