@@ -36,8 +36,10 @@ refs:
   related:                  # optional, weak see-also links (bidirectional)
     - fr:XX-other
     - ref:protocol
-  modules:                  # optional (fr docs): source paths this doc is
-    - crates/.../foo.rs     #   the design of record for; file or dir prefix
+  modules:                  # optional (fr docs): source files this doc is
+    - crates/.../foo.rs     #   the design of record for; exact file paths
+                            #   only — kusara 0.1.1 does not match dir
+                            #   prefixes, they silently claim nothing
 ---
 ```
 
