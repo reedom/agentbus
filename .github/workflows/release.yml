@@ -54,7 +54,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           # Publish in dependency order: agentbus-core must land first.
-          for crate in agentbus-core agentbusd agentbus-cli agentbus-stdio; do
+          for crate in agentbus-core agentbus-cli agentbus-stdio; do
             version=$(cargo metadata --no-deps --format-version 1 \
               | python3 -c "import sys, json; pkgs = json.load(sys.stdin)['packages']; print(next(p['version'] for p in pkgs if p['name'] == '$crate'))")
             if cargo search "$crate" 2>/dev/null | grep -q "^${crate} = \"${version}\""; then

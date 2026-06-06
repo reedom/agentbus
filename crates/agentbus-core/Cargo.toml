@@ -10,11 +10,9 @@ keywords.workspace = true
 description = "Core types for agentbus: envelopes, registry, mailbox, router, and event log."
 
 [dependencies]
-anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
 ulid = { workspace = true }
 time = { workspace = true }
@@ -22,5 +20,4 @@ rusqlite = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
-proptest = { workspace = true }
 tempfile = { workspace = true }
