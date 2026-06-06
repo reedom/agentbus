@@ -1,150 +1,313 @@
-use clap::{Parser, Subcommand};
-use eventsource_stream::Eventsource;
-use futures::StreamExt;
+//! agentbus CLI (fr:10, v0.2): a thin wrapper over the spool store.
+//! Single results print as pretty JSON; streams print one compact JSON
+//! value per line.
+
 use std::io::Read;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use serde_json::Value;
+
+use agentbus_core::envelope::Kind;
+use agentbus_core::store::{EventFilter, RegisterOpts, Store, StoreError, SweepOpts};
 
 #[derive(Parser)]
-#[command(name = "agentbus", about = "agentbus CLI")]
+#[command(
+    name = "agentbus",
+    version,
+    about = "agentbus CLI (daemonless spool store)"
+)]
 pub struct Cli {
-    #[arg(long, env = "AGENTBUS_URL", default_value = "http://127.0.0.1:8765")]
-    pub url: String,
+    /// Store directory (default ~/.agentbus).
+    #[arg(long, env = "AGENTBUS_DIR")]
+    pub dir: Option<PathBuf>,
     #[command(subcommand)]
     pub cmd: Cmd,
 }
 
 #[derive(Subcommand)]
 pub enum Cmd {
+    /// Register an instance id (non-persistent rows die with this process;
+    /// pair with --persistent for durable addresses).
+    Register {
+        id: String,
+        #[arg(long)]
+        persistent: bool,
+        #[arg(long)]
+        on_delivery: Option<String>,
+    },
+    /// Remove a registration (the inbox file is kept).
+    Unregister { id: String },
+    /// List registered instances.
     Ls,
+    /// Send a one-way message (payload from --file or stdin).
     Send {
         to: String,
+        #[arg(long, default_value = "ext:cli")]
+        from: String,
         #[arg(short, long)]
         file: Option<String>,
     },
+    /// Send a request and wait for the reply.
     Ask {
         to: String,
+        #[arg(long, default_value = "ext:cli")]
+        from: String,
         #[arg(long, default_value_t = 30_000)]
         timeout_ms: u64,
         #[arg(short, long)]
         file: Option<String>,
     },
-    Tail {
-        #[arg(long)]
-        instance: Option<String>,
-        #[arg(long)]
-        since: Option<String>,
-    },
+    /// Fetch the (possibly late) reply to an earlier ask.
+    AskResult { request_id: String },
+    /// Reply to an ask as <from>.
     Reply {
         request_id: String,
-        instance: String,
+        from: String,
         #[arg(short, long)]
         file: Option<String>,
     },
-    Rm {
+    /// Drain an instance's inbox without blocking.
+    CheckInbox { id: String },
+    /// Block until messages arrive, or time out (empty list).
+    Await {
         id: String,
+        #[arg(long, default_value_t = 30_000)]
+        timeout_ms: u64,
+    },
+    /// Publish a broadcast event.
+    Publish {
+        #[arg(long, default_value = "ext:cli")]
+        from: String,
+        #[arg(short, long)]
+        file: Option<String>,
+    },
+    /// Read the event log as {"seq":..,"envelope":..} lines; --follow polls.
+    Events {
         #[arg(long)]
-        owner: String,
+        follow: bool,
+        #[arg(long, default_value_t = 0)]
+        since: i64,
+        #[arg(long)]
+        instance: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long, default_value_t = 500)]
+        interval_ms: u64,
+    },
+    /// Stream envelopes addressed to one instance, one compact JSON per
+    /// line, never consuming the inbox (spec 6.7; for harness monitor tools).
+    Watch {
+        id: String,
+        #[arg(long, default_value_t = 500)]
+        interval_ms: u64,
+    },
+    /// Crash recovery: prune dead registrations, re-fire stale hooks,
+    /// report expired asks (spec 6.8).
+    Sweep {
+        #[arg(long)]
+        purge_orphans: bool,
+        #[arg(long, default_value_t = 60)]
+        grace_secs: u64,
     },
 }
 
-pub async fn run(cli: Cli) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+pub fn run(cli: Cli) -> Result<()> {
+    let mut store = match &cli.dir {
+        Some(dir) => Store::open_at(dir)?,
+        None => Store::open()?,
+    };
     match cli.cmd {
-        Cmd::Ls => {
-            let r = client
-                .get(format!("{}/v1/instances", cli.url))
-                .send()
-                .await?;
-            let body = read_success_body(r).await?;
-            let parsed: serde_json::Value = serde_json::from_str(&body)?;
-            println!("{}", serde_json::to_string_pretty(&parsed)?);
+        Cmd::Register {
+            id,
+            persistent,
+            on_delivery,
+        } => {
+            store.register(
+                &id,
+                &RegisterOpts {
+                    persistent,
+                    on_delivery,
+                    pid: None,
+                },
+            )?;
+            println!("{}", serde_json::json!({"ok": true}));
         }
-        Cmd::Send { to, file } => {
-            let payload = read_payload(file)?;
-            let r = client
-                .post(format!("{}/v1/instances/{}/messages", cli.url, to))
-                .json(&serde_json::json!({"payload": payload}))
-                .send()
-                .await?;
-            println!("{}", read_success_body(r).await?);
+        Cmd::Unregister { id } => {
+            let removed = store.unregister(&id)?;
+            println!("{}", serde_json::json!({ "ok": removed }));
+        }
+        Cmd::Ls => {
+            let rows = store.list_instances()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "instances": rows }))?
+            );
+        }
+        Cmd::Send { to, from, file } => {
+            let delivered = store.send(&from, &to, read_payload(&file)?)?;
+            warn_on_hook_failure(delivered.hook.as_ref());
+            println!("{}", serde_json::json!({"id": delivered.envelope.id}));
         }
         Cmd::Ask {
             to,
+            from,
             timeout_ms,
             file,
         } => {
-            let payload = read_payload(file)?;
-            let r = client
-                .post(format!(
-                    "{}/v1/instances/{}/ask?timeout_ms={}",
-                    cli.url, to, timeout_ms
-                ))
-                .json(&serde_json::json!({"payload": payload}))
-                .send()
-                .await?;
-            println!("{}", read_success_body(r).await?);
+            let payload = read_payload(&file)?;
+            match store.ask(&from, &to, payload, Duration::from_millis(timeout_ms)) {
+                Ok(reply) => println!("{}", serde_json::to_string_pretty(&reply)?),
+                Err(StoreError::Timeout(rid)) => {
+                    eprintln!(
+                        "error[timeout]: no reply within {timeout_ms} ms; \
+                         retrieve a late reply with: agentbus ask-result {rid}"
+                    );
+                    std::process::exit(2);
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
-        Cmd::Tail { instance, since } => {
-            let mut url = format!("{}/v1/events", cli.url);
-            let mut qs = Vec::new();
-            if let Some(i) = instance {
-                qs.push(format!("instance={}", urlencoding::encode(&i)));
-            }
-            if let Some(s) = since {
-                qs.push(format!("since={}", urlencoding::encode(&s)));
-            }
-            if !qs.is_empty() {
-                url.push('?');
-                url.push_str(&qs.join("&"));
-            }
-            let resp = client.get(url).send().await?;
-            let mut stream = resp.bytes_stream().eventsource();
-            while let Some(ev) = stream.next().await {
-                let ev = ev?;
-                println!("{}", ev.data);
-            }
+        Cmd::AskResult { request_id } => {
+            let status = store.ask_result(&request_id)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
         }
         Cmd::Reply {
             request_id,
-            instance,
+            from,
             file,
         } => {
-            let payload = read_payload(file)?;
-            let r = client
-                .post(format!("{}/v1/instances/{}/replies", cli.url, instance))
-                .json(&serde_json::json!({"request_id": request_id, "payload": payload}))
-                .send()
-                .await?;
-            println!("{}", read_success_body(r).await?);
+            store.reply(&from, &request_id, read_payload(&file)?)?;
+            println!("{}", serde_json::json!({"ok": true}));
         }
-        Cmd::Rm { id, owner } => {
-            let r = client
-                .delete(format!("{}/v1/instances/{}", cli.url, id))
-                .header("x-agentbus-owner", owner)
-                .send()
-                .await?;
-            println!("{}", read_success_body(r).await?);
+        Cmd::CheckInbox { id } => {
+            let envelopes = store.check_inbox(&id)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "envelopes": envelopes }))?
+            );
+        }
+        Cmd::Await { id, timeout_ms } => {
+            let envelopes = store.await_message(&id, Duration::from_millis(timeout_ms))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "envelopes": envelopes }))?
+            );
+        }
+        Cmd::Publish { from, file } => {
+            let id = store.publish_event(&from, read_payload(&file)?)?;
+            println!("{}", serde_json::json!({ "id": id }));
+        }
+        Cmd::Events {
+            follow,
+            since,
+            instance,
+            kind,
+            interval_ms,
+        } => {
+            let filter = EventFilter {
+                instance,
+                kind: parse_kind(kind.as_deref())?,
+                to: None,
+            };
+            stream_events(
+                &store,
+                since,
+                &filter,
+                follow,
+                Duration::from_millis(interval_ms),
+                true,
+            )?;
+        }
+        Cmd::Watch { id, interval_ms } => {
+            let filter = EventFilter {
+                to: Some(id),
+                ..Default::default()
+            };
+            let cursor = store.max_seq()?; // start live: no replay (spec 6.7)
+            stream_events(
+                &store,
+                cursor,
+                &filter,
+                true,
+                Duration::from_millis(interval_ms),
+                false,
+            )?;
+        }
+        Cmd::Sweep {
+            purge_orphans,
+            grace_secs,
+        } => {
+            let report = store.sweep(&SweepOpts {
+                grace: Duration::from_secs(grace_secs),
+                purge_orphans,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
     }
     Ok(())
 }
 
-async fn read_success_body(resp: reqwest::Response) -> anyhow::Result<String> {
-    let status = resp.status();
-    let body = resp.text().await?;
-    if !status.is_success() {
-        anyhow::bail!("HTTP {}: {}", status, body);
+fn parse_kind(kind: Option<&str>) -> Result<Option<Kind>> {
+    match kind {
+        None => Ok(None),
+        Some(s) => s.parse::<Kind>().map(Some).map_err(anyhow::Error::msg),
     }
-    Ok(body)
 }
 
-fn read_payload(file: Option<String>) -> anyhow::Result<serde_json::Value> {
-    let raw = match file.as_deref() {
-        Some("-") | None => {
-            let mut s = String::new();
-            std::io::stdin().read_to_string(&mut s)?;
-            s
+/// Drain rows from `since`; with `follow`, poll forever. `with_seq` selects
+/// the {"seq":..,"envelope":..} line shape (events) vs bare envelopes (watch).
+fn stream_events(
+    store: &Store,
+    mut cursor: i64,
+    filter: &EventFilter,
+    follow: bool,
+    interval: Duration,
+    with_seq: bool,
+) -> Result<()> {
+    use std::io::Write;
+    loop {
+        loop {
+            let page = store.events_since(cursor, 1000, filter)?;
+            let drained = page.events.is_empty() && page.cursor == cursor;
+            for ev in &page.events {
+                if with_seq {
+                    println!("{}", serde_json::to_string(ev)?);
+                } else {
+                    println!("{}", serde_json::to_string(&ev.envelope)?);
+                }
+            }
+            cursor = page.cursor;
+            if drained {
+                break;
+            }
         }
+        std::io::stdout().flush()?;
+        if !follow {
+            return Ok(());
+        }
+        std::thread::sleep(interval);
+    }
+}
+
+fn warn_on_hook_failure(hook: Option<&agentbus_core::store::HookOutcome>) {
+    if let Some(h) = hook {
+        if !h.ok {
+            eprintln!("warning: on_delivery hook failed: {}", h.detail);
+        }
+    }
+}
+
+fn read_payload(file: &Option<String>) -> Result<Value> {
+    let raw = match file {
         Some(path) => std::fs::read_to_string(path)?,
+        None => {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            buf
+        }
     };
-    Ok(serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw)))
+    Ok(serde_json::from_str(&raw)?)
 }

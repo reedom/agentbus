@@ -14,14 +14,10 @@ name = "agentbus"
 path = "src/main.rs"
 
 [dependencies]
-agentbus-core = { path = "../agentbus-core", version = "0.1.0" }
+agentbus-core = { version = "0.1.0", path = "../agentbus-core" }
 anyhow = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
 clap = { workspace = true }
-reqwest = { workspace = true }
-futures = { workspace = true }
-eventsource-stream = { workspace = true }
-time = { workspace = true }
-urlencoding = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }
