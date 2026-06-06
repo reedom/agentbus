@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_json::json;
 
@@ -32,6 +32,7 @@ impl Default for SweepOpts {
 #[derive(Debug, Default, Serialize)]
 pub struct SweepReport {
     pub dead_instances: Vec<String>,
+    pub recovered_inboxes: Vec<String>,
     pub rehooked: Vec<String>,
     pub expired_asks: Vec<String>,
     pub purged_inboxes: Vec<String>,
@@ -42,11 +43,35 @@ impl Store {
         let mut report = SweepReport::default();
         self.sweep_dead_instances(&mut report)?;
         self.sweep_expired_asks(&mut report)?;
+        self.sweep_stranded_snapshots(&mut report)?;
         self.sweep_stale_inboxes(opts.grace, &mut report)?;
         if opts.purge_orphans {
             self.sweep_orphan_inboxes(&mut report)?;
         }
         Ok(report)
+    }
+
+    /// A consumer that crashed mid-`check_inbox` strands its snapshot; merge
+    /// it back into the live spool and wake the owner now rather than after
+    /// another grace period.
+    fn sweep_stranded_snapshots(&mut self, report: &mut SweepReport) -> Result<(), StoreError> {
+        let recovered = super::spool::recover_snapshots(&self.base)?;
+        for id in &recovered {
+            let cmd: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT on_delivery FROM instances WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            if let Some(cmd) = cmd {
+                self.run_sweep_hook(&cmd, id);
+            }
+        }
+        report.recovered_inboxes = recovered;
+        Ok(())
     }
 
     fn sweep_dead_instances(&mut self, report: &mut SweepReport) -> Result<(), StoreError> {
@@ -183,6 +208,88 @@ mod tests {
             grace: Duration::ZERO,
             purge_orphans: purge,
         }
+    }
+
+    fn dead_pid() -> i32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        pid
+    }
+
+    /// Simulate a consumer that crashed between check_inbox's rename and
+    /// remove: the batch sits in `<id>.processing.<pid>` with the pid dead.
+    fn strand_inbox(base: &std::path::Path, id: &str) -> std::path::PathBuf {
+        let inbox = crate::store::paths::inbox_dir(base);
+        let snap = inbox.join(format!("{id}.processing.{}", dead_pid()));
+        std::fs::rename(inbox.join(format!("{id}.jsonl")), &snap).unwrap();
+        snap
+    }
+
+    #[test]
+    fn recovers_snapshot_stranded_by_dead_consumer() {
+        let (tmp, mut store) = test_store();
+        store.register("bob", &RegisterOpts::default()).unwrap();
+        store.send("alice", "bob", json!({"n": 1})).unwrap();
+        store.send("alice", "bob", json!({"n": 2})).unwrap();
+        let snap = strand_inbox(tmp.path(), "bob");
+        let report = store.sweep(&zero_grace(false)).unwrap();
+        assert_eq!(report.recovered_inboxes, vec!["bob".to_string()]);
+        assert!(!snap.exists());
+        assert_eq!(store.check_inbox("bob").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn recovery_merges_snapshot_into_live_spool() {
+        let (tmp, mut store) = test_store();
+        store.register("bob", &RegisterOpts::default()).unwrap();
+        store.send("alice", "bob", json!({"n": 1})).unwrap();
+        strand_inbox(tmp.path(), "bob");
+        // A new live spool appears after the crash; recovery must merge,
+        // not clobber.
+        store.send("alice", "bob", json!({"n": 2})).unwrap();
+        let report = store.sweep(&zero_grace(false)).unwrap();
+        assert_eq!(report.recovered_inboxes, vec!["bob".to_string()]);
+        let got = store.check_inbox("bob").unwrap();
+        let mut ids: Vec<&str> = got.iter().map(|e| e.id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 2); // both messages survive, no duplicates
+    }
+
+    #[test]
+    fn leaves_snapshot_of_live_consumer_alone() {
+        let (tmp, mut store) = test_store();
+        let inbox = crate::store::paths::inbox_dir(tmp.path());
+        let snap = inbox.join(format!("bob.processing.{}", std::process::id()));
+        std::fs::write(&snap, "{}\n").unwrap();
+        let report = store.sweep(&zero_grace(false)).unwrap();
+        assert!(report.recovered_inboxes.is_empty());
+        assert!(snap.exists()); // an in-flight consume is not ours to touch
+    }
+
+    #[test]
+    fn recovery_refires_on_delivery_hook() {
+        let (tmp, mut store) = test_store();
+        let marker = tmp.path().join("recovered.out");
+        let opts = RegisterOpts {
+            persistent: true,
+            on_delivery: Some(format!("echo woke > {}", marker.display())),
+            ..Default::default()
+        };
+        store.register("bot", &opts).unwrap();
+        store.send("alice", "bot", json!({})).unwrap();
+        std::fs::remove_file(&marker).unwrap(); // drop the send-time fire
+        strand_inbox(tmp.path(), "bot");
+        // Long grace: the stale-inbox rehook must not be the one firing.
+        let opts = SweepOpts {
+            grace: Duration::from_secs(3600),
+            purge_orphans: false,
+        };
+        let report = store.sweep(&opts).unwrap();
+        assert_eq!(report.recovered_inboxes, vec!["bot".to_string()]);
+        assert!(report.rehooked.is_empty());
+        assert!(marker.exists());
     }
 
     #[test]

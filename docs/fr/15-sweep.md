@@ -5,6 +5,7 @@ refs:
   title: "sweep: periodic crash recovery"
   related:
     - fr:02-instance-registry
+    - fr:09-hook-inbox
     - fr:13-on-delivery
   modules:
     - crates/agentbus-core/src/store/sweep.rs
@@ -13,7 +14,8 @@ refs:
 # FR 15: sweep: periodic crash recovery
 
 > `agentbus sweep` is a periodic CLI that prunes dead registrations, reports
-> expired asks, and re-fires stuck on_delivery hooks — no resident process.
+> expired asks, recovers snapshots stranded by crashed consumers, and re-fires
+> stuck on_delivery hooks — no resident process.
 
 ## Purpose
 
@@ -33,7 +35,7 @@ agentbus sweep [--grace-secs <s>] [--purge-orphans]
 `--grace-secs` defaults to 60. `--purge-orphans` is off by default.
 Output is a pretty-printed JSON `SweepReport`.
 
-### Four actions, in order
+### Five actions, in order
 
 **1. Remove dead non-persistent instance rows.**
 
@@ -61,7 +63,24 @@ expired ask:
   `bus.ask_expired` event is operationally preferable to a lost one.
 - Then `expired_notified = 1` is set in a transaction.
 
-**3. Re-fire on_delivery for stale non-empty inboxes.**
+**3. Recover inbox snapshots stranded by crashed consumers.**
+
+A consumer that dies between `check_inbox`'s rename and remove leaves its
+batch in `<id>.processing.<pid>` (fr:09-hook-inbox rename-snapshot
+contract). For every such file whose pid is dead, sweep merges the snapshot
+back into the live `<id>.jsonl` spool (creating it if absent, appending
+under the sender flock protocol if a new spool appeared since the crash),
+removes the snapshot, and — when the owner has an `on_delivery` hook —
+re-fires it immediately via `run_sweep_hook`, without waiting for the
+grace period of action 4.
+
+Snapshots whose pid is still alive are in-flight consumes and are left
+untouched. Concurrent sweepers recover each snapshot exactly once (the
+snapshot is removed under its flock, and a competing sweeper rechecks the
+inode after acquiring it). A sweeper crashing between merge and remove
+duplicates the batch on the next sweep: at-least-once, never silent loss.
+
+**4. Re-fire on_delivery for stale non-empty inboxes.**
 
 For every instance with a non-NULL `on_delivery`, sweep checks the inbox
 file. If the file is non-empty and its mtime is older than the grace period
@@ -72,7 +91,7 @@ The sweep hook receives only `AGENTBUS_INSTANCE` (no envelope-specific
 vars). Hooks must be idempotent with respect to receiving only that
 variable.
 
-**4. Purge orphan inbox files (opt-in).**
+**5. Purge orphan inbox files (opt-in).**
 
 With `--purge-orphans`, sweep deletes `<id>.jsonl` files in the inbox
 directory that have no corresponding instance row. Files matching
@@ -82,10 +101,11 @@ directory that have no corresponding instance row. Files matching
 
 ```json
 {
-  "dead_instances": ["<id>", ...],
-  "rehooked":       ["<id>", ...],
-  "expired_asks":   ["<request_id>", ...],
-  "purged_inboxes": ["<id>", ...]
+  "dead_instances":    ["<id>", ...],
+  "recovered_inboxes": ["<id>", ...],
+  "rehooked":          ["<id>", ...],
+  "expired_asks":      ["<request_id>", ...],
+  "purged_inboxes":    ["<id>", ...]
 }
 ```
 
@@ -104,13 +124,20 @@ directory that have no corresponding instance row. Files matching
 
 - Sweep is a periodic CLI, not a resident. It must be scheduled externally
   (launchd, cron, systemd timer). Scheduling is outside the scope of this FR.
-- Sweep does not re-deliver envelopes — it only re-fires hooks. The envelope
-  already in the inbox spool is the delivery.
+- Sweep does not re-deliver envelopes — it only re-fires hooks and moves
+  stranded snapshots back into the spool. The envelope in the inbox spool is
+  the delivery.
 - The `bus.ask_expired` event may be emitted more than once for the same
   `request_id` in crash scenarios (at-least-once). Consumers must tolerate
   duplicate `bus.ask_expired` events.
-- `.processing.*` snapshot files (created by the fr:09 rename-consume
-  contract) are never deleted by `--purge-orphans`.
+- Snapshot recovery is likewise at-least-once: a sweeper crash between merge
+  and remove re-merges the same batch on the next run, so consumers may see
+  duplicate envelopes after a sweeper crash.
+- `.processing.*` snapshot files are never deleted by `--purge-orphans`;
+  they are only reclaimed by action 3 once their owning pid is dead.
+- Pid reuse caveat: a recycled pid that happens to be alive delays recovery
+  of an old snapshot until that unrelated process exits (same caveat as
+  fr:02 liveness).
 - Sweep does not purge `asks` rows; those stay indefinitely so that
   `ask-result` can retrieve late replies.
 - on_delivery re-fire behavior is covered jointly by this FR and

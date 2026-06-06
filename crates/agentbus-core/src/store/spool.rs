@@ -45,16 +45,79 @@ pub(crate) fn append(base: &Path, id: &str, env: &Envelope) -> Result<(), StoreE
     }
     let mut line = serde_json::to_vec(env).expect("envelope serializes");
     line.push(b'\n');
+    append_bytes(base, id, &line)
+}
+
+/// Locked write to the live spool, shared by `append` and crash recovery.
+fn append_bytes(base: &Path, id: &str, bytes: &[u8]) -> Result<(), StoreError> {
     let path = inbox_path(base, id);
     loop {
         let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
         flock_exclusive(&f)?;
         if is_live_spool(&f, &path)? {
-            f.write_all(&line)?;
+            f.write_all(bytes)?;
             return Ok(());
         }
         // A consumer renamed the spool between open and lock; retry.
     }
+}
+
+/// Sweep-side crash recovery (fr:15): a consumer that died between
+/// `check_inbox`'s rename and remove leaves its batch stranded in
+/// `<id>.processing.<pid>`. Once that pid is dead, merge the snapshot back
+/// into the live spool so delivery retries. A sweeper crashing mid-merge
+/// duplicates the batch on the next sweep: at-least-once, never silent loss.
+pub(crate) fn recover_snapshots(base: &Path) -> Result<Vec<String>, StoreError> {
+    let mut recovered = Vec::new();
+    for entry in std::fs::read_dir(inbox_dir(base))? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(id) = stranded_snapshot_owner(&name) else {
+            continue;
+        };
+        if recover_snapshot(base, id, &entry.path())? {
+            recovered.push(id.to_string());
+        }
+    }
+    recovered.sort();
+    recovered.dedup();
+    Ok(recovered)
+}
+
+/// Parse `<id>.processing.<pid>`, returning the id only when the pid is dead.
+fn stranded_snapshot_owner(name: &str) -> Option<&str> {
+    let (id, pid) = name.rsplit_once(".processing.")?;
+    let pid: i32 = pid.parse().ok()?;
+    if id.is_empty() || super::liveness::pid_alive(pid) {
+        return None;
+    }
+    Some(id)
+}
+
+/// Merge one stranded snapshot into the live spool, then remove it. The
+/// snapshot lock plus the live-inode recheck makes concurrent sweepers
+/// recover each snapshot exactly once.
+fn recover_snapshot(base: &Path, id: &str, snap: &Path) -> Result<bool, StoreError> {
+    let f = match File::open(snap) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.into()),
+    };
+    flock_exclusive(&f)?;
+    if !is_live_spool(&f, snap)? {
+        return Ok(false); // another sweeper already recovered it
+    }
+    let mut bytes = std::fs::read(snap)?;
+    if bytes.last().is_some_and(|b| *b != b'\n') {
+        bytes.push(b'\n'); // a torn final line must not corrupt the next append
+    }
+    if !bytes.is_empty() {
+        append_bytes(base, id, &bytes)?;
+    }
+    // Remove while still holding the lock so a racing sweeper that acquires
+    // it next fails the live-inode recheck instead of re-merging.
+    std::fs::remove_file(snap)?;
+    Ok(true)
 }
 
 /// True when `f` still refers to the inode currently named by `path`.

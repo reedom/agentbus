@@ -6,6 +6,7 @@ refs:
   related:
     - fr:01-envelope
     - fr:02-instance-registry
+    - fr:15-sweep
   modules:
     - crates/agentbus-core/src/store/spool.rs
     - scripts/inject-inbox.sh
@@ -39,6 +40,12 @@ file format and the consumer contract are unchanged from v0.1.
 - Consumers use the rename-snapshot contract:
   1. Rename `<id>.jsonl` → `<id>.processing.<pid>` (atomic).
   2. Read all lines, process, delete the processing file.
+- A consumer that crashes between the rename and the delete strands its
+  batch in `<id>.processing.<pid>`. `agentbus sweep` (fr:15-sweep) merges
+  such snapshots back into the live spool once the pid is dead, so the
+  messages are redelivered (at-least-once) rather than silently lost. The
+  snapshot name must therefore embed the consumer's real pid — that is what
+  marks an in-flight consume as alive.
 - Consumers never need a lock (the sender's dev+ino reopen loop protects
   them). The Rust consumer (`check_inbox`) additionally acquires the
   exclusive `flock` once after the rename, as a barrier ensuring an

@@ -85,7 +85,7 @@ crate). See [fr:12-store](../fr/12-store.md) for the schema and concurrency rule
 | `publish_event(from, payload)` | Append a broadcast event to the event log. Returns event id. | — |
 | `events_since(cursor, filter?)` | Read event log from cursor; filter by `instance`, `kind`, or recipient `to`. | — |
 | `watch(id, interval_ms?)` | Live stream of envelopes addressed to `id`, one compact JSON line per event. Starts at current max_seq (no replay). Never consumes the inbox. Runs until killed. | — |
-| `sweep(grace_secs?, purge_orphans?)` | Crash recovery: prune dead non-persistent registrations, re-fire stale on_delivery hooks, report expired asks. | — |
+| `sweep(grace_secs?, purge_orphans?)` | Crash recovery: prune dead non-persistent registrations, recover inbox snapshots stranded by crashed consumers, re-fire stale on_delivery hooks, report expired asks. | — |
 
 ### 2.1 Error codes
 
@@ -272,8 +272,10 @@ agentbus watch impl --interval-ms 500
 agentbus sweep
 # {
 #   "dead_instances": [],
-#   "purged_inboxes": [],
-#   "expired_asks": []
+#   "recovered_inboxes": [],
+#   "rehooked": [],
+#   "expired_asks": [],
+#   "purged_inboxes": []
 # }
 ```
 
