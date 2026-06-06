@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::envelope::Envelope;
 
+use super::instances::valid_instance_id;
 use super::paths::inbox_dir;
 use super::{Store, StoreError};
 
@@ -19,29 +20,53 @@ fn inbox_path(base: &Path, id: &str) -> PathBuf {
 }
 
 fn flock_exclusive(f: &File) -> std::io::Result<()> {
-    let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-    if rc == 0 {
-        return Ok(());
+    loop {
+        let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let e = std::io::Error::last_os_error();
+        // flock(2) is not auto-restarted by SA_RESTART; retry on signals.
+        if e.kind() != std::io::ErrorKind::Interrupted {
+            return Err(e);
+        }
     }
-    Err(std::io::Error::last_os_error())
 }
 
-/// Sender-side append (spec 6.2). The lock releases when `f` drops.
+/// Sender-side append (spec 6.2). The lock releases when the file drops.
+///
+/// Open-then-lock leaves a window where a consumer renames and unlinks the
+/// inode we are about to lock; writing there would lose the line. After
+/// acquiring the lock we verify the fd still names the live spool file and
+/// reopen if not. This also keeps lock-free shell consumers (fr:09) safe.
 #[allow(dead_code)] // production use from Task 5 onward (tests use it now)
 pub(crate) fn append(base: &Path, id: &str, env: &Envelope) -> Result<(), StoreError> {
-    // Ids are validated at registration; never let one escape the inbox dir.
-    if id.contains('/') || id.contains("..") {
+    if !valid_instance_id(id) {
         return Err(StoreError::InvalidInstanceId);
     }
     let mut line = serde_json::to_vec(env).expect("envelope serializes");
     line.push(b'\n');
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(inbox_path(base, id))?;
-    flock_exclusive(&f)?;
-    f.write_all(&line)?;
-    Ok(())
+    let path = inbox_path(base, id);
+    loop {
+        let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+        flock_exclusive(&f)?;
+        if is_live_spool(&f, &path)? {
+            f.write_all(&line)?;
+            return Ok(());
+        }
+        // A consumer renamed the spool between open and lock; retry.
+    }
+}
+
+/// True when `f` still refers to the inode currently named by `path`.
+fn is_live_spool(f: &File, path: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let held = f.metadata()?;
+    match std::fs::metadata(path) {
+        Ok(named) => Ok(named.dev() == held.dev() && named.ino() == held.ino()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 impl Store {
@@ -74,6 +99,8 @@ impl Store {
 
     /// Poll own inbox for nonzero size, then consume (spec 6.6).
     /// Returns an empty vec when nothing arrives within `timeout`.
+    /// Concurrent consumers of the same id are safe but may race: the loser of
+    /// the rename observes an empty batch while the winner gets the messages.
     pub fn await_message(&self, id: &str, timeout: Duration) -> Result<Vec<Envelope>, StoreError> {
         let src = inbox_path(&self.base, id);
         let deadline = Instant::now() + timeout;
@@ -181,6 +208,41 @@ mod tests {
             .await_message("bob", Duration::from_millis(120))
             .unwrap();
         assert!(got.is_empty());
+    }
+
+    #[test]
+    fn concurrent_consumer_loses_no_messages() {
+        // Exercises the reopen-after-rename path: a consumer drains the spool
+        // while writers are mid-burst (the review's C1 message-loss race).
+        let (tmp, store) = test_store();
+        let mut handles = Vec::new();
+        for w in 0..4u64 {
+            let base = tmp.path().to_path_buf();
+            handles.push(std::thread::spawn(move || {
+                for i in 0..50u64 {
+                    let e = crate::store::new_envelope(
+                        Kind::Message,
+                        "alice",
+                        Some("bob"),
+                        json!({"w": w, "i": i}),
+                    );
+                    super::append(&base, "bob", &e).unwrap();
+                }
+            }));
+        }
+        let mut got = Vec::new();
+        while handles.iter().any(|h| !h.is_finished()) {
+            got.extend(store.check_inbox("bob").unwrap());
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        got.extend(store.check_inbox("bob").unwrap());
+        assert_eq!(got.len(), 200);
+        let mut ids: Vec<&str> = got.iter().map(|e| e.id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 200); // and no duplicates
     }
 
     #[test]
