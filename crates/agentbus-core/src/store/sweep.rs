@@ -50,7 +50,7 @@ impl Store {
     }
 
     fn sweep_dead_instances(&mut self, report: &mut SweepReport) -> Result<(), StoreError> {
-        let dead: Vec<String> = {
+        let dead: Vec<(String, Option<i32>)> = {
             let mut stmt = self
                 .conn
                 .prepare("SELECT id, pid FROM instances WHERE persistent = 0")?;
@@ -61,21 +61,24 @@ impl Store {
             for row in rows {
                 let (id, pid) = row?;
                 if !pid.map(pid_alive).unwrap_or(false) {
-                    dead.push(id);
+                    dead.push((id, pid));
                 }
             }
             dead
         };
         self.with_tx(|tx| {
-            for id in &dead {
+            for (id, pid) in &dead {
+                // The pid predicate closes the liveness-check-to-delete
+                // window: a row re-registered under a new live pid since the
+                // check above is left alone.
                 tx.execute(
-                    "DELETE FROM instances WHERE id = ?1 AND persistent = 0",
-                    params![id],
+                    "DELETE FROM instances WHERE id = ?1 AND persistent = 0 AND pid IS ?2",
+                    params![id, pid],
                 )?;
             }
             Ok(())
         })?;
-        report.dead_instances = dead;
+        report.dead_instances = dead.into_iter().map(|(id, _)| id).collect();
         Ok(())
     }
 
@@ -96,6 +99,8 @@ impl Store {
             if !is_expired {
                 continue;
             }
+            // Publish before flipping the flag: at-least-once on crash, but
+            // never silent suppression. A duplicate event beats a lost one.
             self.publish_event(
                 "bus",
                 json!({"event": "bus.ask_expired", "request_id": request_id}),
