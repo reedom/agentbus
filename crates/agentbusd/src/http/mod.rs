@@ -22,10 +22,7 @@ pub fn build_router(state: AppState) -> Router {
             post(instances::register).get(instances::list),
         )
         .route("/v1/instances/:id", delete(instances::unregister))
-        .route(
-            "/v1/instances/:id/messages",
-            post(messages::send_message),
-        )
+        .route("/v1/instances/:id/messages", post(messages::send_message))
         .route("/v1/instances/:id/replies", post(messages::send_reply))
         .route("/v1/instances/:id/inbox", get(inbox::inbox))
         .route("/v1/instances/:id/ask", post(ask::ask))

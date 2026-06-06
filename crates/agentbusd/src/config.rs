@@ -37,7 +37,9 @@ pub struct Config {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("bind must be a loopback address in v1; got {0}. Auth/TLS for non-loopback is future work.")]
+    #[error(
+        "bind must be a loopback address in v1; got {0}. Auth/TLS for non-loopback is future work."
+    )]
     NonLoopbackBind(IpAddr),
 }
 

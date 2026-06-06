@@ -5,7 +5,12 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-async fn rpc(stream: &mut UnixStream, id: u64, method: &str, params: serde_json::Value) -> serde_json::Value {
+async fn rpc(
+    stream: &mut UnixStream,
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> serde_json::Value {
     let req = json!({"id": id, "method": method, "params": params});
     let mut buf = serde_json::to_vec(&req).unwrap();
     buf.push(b'\n');

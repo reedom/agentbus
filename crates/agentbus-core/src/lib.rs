@@ -6,3 +6,4 @@ pub mod ids;
 pub mod mailbox;
 pub mod registry;
 pub mod router;
+pub mod store;

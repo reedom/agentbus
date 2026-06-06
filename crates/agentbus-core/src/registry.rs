@@ -80,7 +80,13 @@ impl Registry {
         let mut g = self.inner.write().await;
         let victims: Vec<String> = g
             .iter()
-            .filter_map(|(k, v)| if v.owner == owner { Some(k.clone()) } else { None })
+            .filter_map(|(k, v)| {
+                if v.owner == owner {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
         let mut closed_ids = Vec::with_capacity(victims.len());
         for id in victims {

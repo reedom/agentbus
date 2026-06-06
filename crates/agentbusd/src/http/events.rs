@@ -1,5 +1,7 @@
 //! Global SSE event stream with replay-then-live semantics.
 
+use agentbus_core::envelope::{Envelope, Kind};
+use agentbus_core::ids::{new_envelope_id, now_utc};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -10,8 +12,6 @@ use axum::{
     Json,
 };
 use futures::stream::{self, StreamExt};
-use agentbus_core::envelope::{Envelope, Kind};
-use agentbus_core::ids::{new_envelope_id, now_utc};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::convert::Infallible;
@@ -51,10 +51,7 @@ pub async fn events(
     let mut live = state.broadcast_tx.subscribe();
     let snapshot = state.log.snapshot_offset().await.unwrap_or(0);
     let log = state.log.clone();
-    let replayed = log
-        .replay_since(since, snapshot)
-        .await
-        .unwrap_or_default();
+    let replayed = log.replay_since(since, snapshot).await.unwrap_or_default();
 
     let replayed_ids: HashSet<String> = replayed.iter().map(|e| e.id.clone()).collect();
 
@@ -152,5 +149,9 @@ pub async fn publish(
     };
     let _ = state.log.append(&env).await;
     let _ = state.broadcast_tx.send(env.clone());
-    (StatusCode::ACCEPTED, Json(serde_json::json!({"id": env.id}))).into_response()
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"id": env.id})),
+    )
+        .into_response()
 }

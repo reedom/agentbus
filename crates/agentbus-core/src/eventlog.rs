@@ -83,7 +83,7 @@ impl EventLog {
             if n == 0 {
                 break;
             }
-            let trimmed = buf.trim_end_matches(|c| c == '\n' || c == '\r');
+            let trimmed = buf.trim_end_matches(['\n', '\r']);
             if trimmed.is_empty() {
                 continue;
             }
@@ -153,10 +153,7 @@ mod tests {
         log.append(&e2).await.unwrap();
         let off = log.snapshot_offset().await.unwrap();
         let replay = log
-            .replay_since(
-                Some(time::macros::datetime!(2026-03-01 00:00:00 UTC)),
-                off,
-            )
+            .replay_since(Some(time::macros::datetime!(2026-03-01 00:00:00 UTC)), off)
             .await
             .unwrap();
         assert_eq!(replay.len(), 1);

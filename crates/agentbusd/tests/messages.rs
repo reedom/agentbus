@@ -1,6 +1,6 @@
 mod common;
-use common::*;
 use agentbus_core::envelope::Envelope;
+use common::*;
 use std::time::Duration;
 
 #[tokio::test]

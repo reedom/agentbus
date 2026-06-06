@@ -148,9 +148,8 @@ impl Router {
             .collect();
         for k in victims {
             if let Some(p) = g.remove(&k) {
-                let _ = p
-                    .tx
-                    .send(Err(RouteError::InstanceDisconnected(instance_id.into())));
+                let _ =
+                    p.tx.send(Err(RouteError::InstanceDisconnected(instance_id.into())));
             }
         }
     }

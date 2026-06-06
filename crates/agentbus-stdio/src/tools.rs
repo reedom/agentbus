@@ -131,8 +131,12 @@ pub async fn call(
 }
 
 fn normalize_json_string_field(args: &mut serde_json::Value, key: &str) {
-    let Some(obj) = args.as_object_mut() else { return };
-    let Some(field) = obj.get_mut(key) else { return };
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
+    let Some(field) = obj.get_mut(key) else {
+        return;
+    };
     if let Some(s) = field.as_str() {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
             *field = parsed;

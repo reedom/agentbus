@@ -1,6 +1,6 @@
-use clap::Parser;
 use agentbus_core::eventlog::EventLog;
 use agentbusd::{config, http, shutdown, state};
+use clap::Parser;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
 

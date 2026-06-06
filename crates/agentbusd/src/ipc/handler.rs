@@ -105,7 +105,11 @@ pub async fn dispatch(
         }
         "send" => {
             let env = build_envelope(params, Kind::Message)?;
-            let id = state.router.send(env.clone()).await.map_err(map_route_err)?;
+            let id = state
+                .router
+                .send(env.clone())
+                .await
+                .map_err(map_route_err)?;
             let _ = state.log.append(&env).await;
             let _ = state.broadcast_tx.send(env);
             Ok(json!({ "id": id }))
@@ -136,7 +140,11 @@ pub async fn dispatch(
                 .get("request_id")
                 .and_then(|v| v.as_str())
                 .map(Into::into);
-            state.router.reply(env.clone()).await.map_err(map_route_err)?;
+            state
+                .router
+                .reply(env.clone())
+                .await
+                .map_err(map_route_err)?;
             let _ = state.log.append(&env).await;
             let _ = state.broadcast_tx.send(env);
             Ok(json!({"ok": true}))

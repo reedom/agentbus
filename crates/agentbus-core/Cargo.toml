@@ -18,6 +18,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 ulid = { workspace = true }
 time = { workspace = true }
+rusqlite = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

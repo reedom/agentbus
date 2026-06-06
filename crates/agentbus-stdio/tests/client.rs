@@ -21,7 +21,9 @@ async fn client_register_and_send_and_await() {
     let log = agentbus_core::eventlog::EventLog::open(&log_path, 65536)
         .await
         .unwrap();
-    let state = agentbusd::state::AppState::new_async(cfg, log).await.unwrap();
+    let state = agentbusd::state::AppState::new_async(cfg, log)
+        .await
+        .unwrap();
     let st = state.clone();
     let sp = socket.clone();
     tokio::spawn(async move { agentbusd::ipc::serve(st, sp).await.unwrap() });
