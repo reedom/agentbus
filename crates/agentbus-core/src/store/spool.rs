@@ -168,7 +168,13 @@ impl Store {
         let deadline = Instant::now() + timeout;
         let mut delay = Duration::from_millis(50);
         loop {
-            let len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+            // Only an absent spool means "empty"; any other IO failure is a
+            // broken store and must surface, not degrade to a silent timeout.
+            let len = match std::fs::metadata(&src) {
+                Ok(m) => m.len(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+                Err(e) => return Err(e.into()),
+            };
             if 0 < len {
                 return self.check_inbox(id);
             }
@@ -264,6 +270,20 @@ mod tests {
     }
 
     #[test]
+    fn await_message_propagates_io_errors() {
+        // A broken store dir must surface as an error, not be silently
+        // polled into an empty-batch timeout (review issue I2).
+        let (tmp, store) = test_store();
+        let inbox = paths::inbox_dir(tmp.path());
+        std::fs::remove_dir_all(&inbox).unwrap();
+        std::fs::write(&inbox, "not a directory").unwrap();
+        let err = store
+            .await_message("bob", Duration::from_millis(500))
+            .unwrap_err();
+        assert!(matches!(err, crate::store::StoreError::Io(_)));
+    }
+
+    #[test]
     fn await_message_times_out_empty() {
         let (_tmp, store) = test_store();
         let got = store
@@ -334,5 +354,40 @@ mod tests {
         assert!(!crate::store::paths::inbox_dir(tmp.path())
             .join("bob.jsonl")
             .exists());
+    }
+
+    #[test]
+    fn inject_inbox_script_skips_corrupt_lines() {
+        // fr:09: the shell consumer must match check_inbox's tolerance — one
+        // corrupt line may not abort the drain and strand the batch.
+        let (tmp, _store) = test_store();
+        super::append(tmp.path(), "bob", &env(11)).unwrap();
+        let inbox = crate::store::paths::inbox_dir(tmp.path());
+        let path = inbox.join("bob.jsonl");
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str("{not json\n");
+        std::fs::write(&path, content).unwrap();
+        super::append(tmp.path(), "bob", &env(22)).unwrap();
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/inject-inbox.sh");
+        let out = std::process::Command::new("bash")
+            .arg(script)
+            .env("AGENTBUS_INSTANCE", "bob")
+            .env("AGENTBUS_INBOX_DIR", &inbox)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("11"), "stdout: {stdout}");
+        assert!(stdout.contains("22"), "stdout: {stdout}");
+        // The drain completed: no spool and no stranded snapshot remain.
+        let leftovers: Vec<String> = std::fs::read_dir(&inbox)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(leftovers.is_empty(), "leftovers: {leftovers:?}");
     }
 }

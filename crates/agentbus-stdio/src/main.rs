@@ -83,10 +83,16 @@ fn handle(
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             let result = tools::call(store, session, name, args)?;
+            // Serializing a Value cannot fail today, but a panic here would
+            // tear down the whole stdio session; degrade to a JSON-RPC error.
+            let text = serde_json::to_string(&result).map_err(|e| {
+                json!({"code": -32603, "message": "internal error",
+                       "data": format!("serialize result: {e}")})
+            })?;
             Ok(json!({
                 "content": [{
                     "type": "text",
-                    "text": serde_json::to_string(&result).unwrap()
+                    "text": text
                 }]
             }))
         }

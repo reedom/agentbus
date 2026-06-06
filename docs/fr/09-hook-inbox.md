@@ -87,8 +87,15 @@ file format and the consumer contract are unchanged from v0.1.
 
 - Sender open/flock/write errors are surfaced as `StoreError::Io` after the
   event_log commit (partial-failure path; see fr:04-router).
-- Consumer: corrupt JSONL lines (unparseable JSON) are skipped with a warning;
-  well-formed lines before and after are still delivered.
+- Consumers: corrupt JSONL lines (unparseable JSON) are skipped with a
+  warning; well-formed lines before and after are still delivered. This
+  holds for both the Rust consumer (`check_inbox`) and the reference shell
+  script (stderr diagnostic) — a corrupt line never aborts a drain.
+- `await_message` treats only an absent spool file as "empty"; any other
+  metadata failure (permissions, broken store dir) surfaces as
+  `StoreError::Io` instead of polling into an empty-batch timeout.
+- The reference script exits non-zero before the rename when `python3` is
+  unavailable, leaving the spool in place untouched.
 - The `flock` call is retried on `EINTR` (signal interrupt); it does not use
   `LOCK_NB`.
 
