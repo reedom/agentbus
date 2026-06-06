@@ -165,6 +165,8 @@ pub fn run(cli: Cli) -> Result<()> {
                         "error[timeout]: no reply within {timeout_ms} ms; \
                          retrieve a late reply with: agentbus ask-result {rid}"
                     );
+                    // Safe to skip Store::drop: the process exits now and
+                    // SQLite WAL frames are OS-durable without a close.
                     std::process::exit(2);
                 }
                 Err(e) => return Err(e.into()),
@@ -302,7 +304,8 @@ fn warn_on_hook_failure(hook: Option<&agentbus_core::store::HookOutcome>) {
 
 fn read_payload(file: &Option<String>) -> Result<Value> {
     let raw = match file {
-        Some(path) => std::fs::read_to_string(path)?,
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("reading payload file `{path}`: {e}"))?,
         None => {
             let mut buf = String::new();
             std::io::stdin().read_to_string(&mut buf)?;
