@@ -2,90 +2,99 @@
 refs:
   id: fr:08-mcp-shim
   kind: fr
-  title: "MCP stdio shim and tool surface"
+  title: "MCP stdio shim over the store"
   related:
-    - ref:protocol
     - fr:01-envelope
-    - fr:02-instance-registry
     - fr:04-router
+    - fr:09-hook-inbox
+    - fr:10-cli
   modules:
     - crates/agentbus-stdio/src
-    - crates/agentbusd/src/ipc
 ---
 
-# FR 08: MCP stdio shim and tool surface
+# FR 08: MCP stdio shim over the store
 
-> The stateless stdio MCP server that exposes the bus as MCP tools and proxies to the daemon.
+> A single-threaded MCP stdio server that opens the spool store directly — no daemon, no socket.
 
 ## Purpose
 
-MCP stdio servers must run as subprocesses of the AI client, but the bus needs
-state that outlives any one AI session. The shim resolves this split: each AI
-session launches its own `agentbus-stdio` shim, which is a thin, stateless proxy
-forwarding MCP tool calls to the long-lived daemon over a Unix socket and
-streaming responses back.
+Each AI session launches its own `agentbus-stdio` process. In v0.2 the shim
+is not a proxy: it opens `~/.agentbus/bus.db` and the inbox spool directory
+directly, performing all store operations in-process. There is no daemon or
+Unix socket. The shim is thin enough that its entire state is one open store
+handle and the list of non-persistent instance ids registered in this session.
 
 ## User-visible Behavior
 
-The shim exposes these MCP tools:
+The shim exposes nine MCP tools over a JSON-RPC line loop on stdin/stdout:
 
 | Tool | Purpose |
 |---|---|
-| `register(instance_id, mailbox_size?)` | Claim an ID for this session |
-| `unregister()` | Release the ID early (also on shim exit) |
-| `await_message(timeout_secs?)` | Block until a message arrives, or return empty on timeout |
-| `check_inbox()` | Non-blocking drain (0..N envelopes) |
-| `reply(request_id, payload)` | Answer an inbound `ask` |
-| `send(to, payload)` | One-way message to another instance |
-| `ask(to, payload, timeout_secs?)` | RPC; blocks until reply or timeout |
-| `publish_event(kind, payload)` | Broadcast to all SSE subscribers |
-| `list_instances()` | Enumerate active instances |
+| `register(instance_id, persistent?, on_delivery?)` | Claim an id for this session |
+| `unregister(instance_id)` | Release an id early |
+| `list_instances()` | Enumerate registered instances with liveness |
+| `await_message(instance_id, timeout_ms?)` | Block until messages arrive or timeout (returns `{"envelopes": [...]}`) |
+| `check_inbox(instance_id)` | Non-blocking drain (returns `{"envelopes": [...]}`) |
+| `send(from, to, payload)` | One-way message |
+| `ask(from, to, payload, timeout_ms?)` | RPC; blocks until reply or timeout |
+| `reply(from, request_id, payload)` | Answer an inbound ask |
+| `publish_event(from, payload)` | Append a broadcast event to the log |
 
-- The shim connects to the daemon's Unix socket
-  (`$XDG_RUNTIME_DIR/agentbus.sock`) at startup, exchanging JSON-RPC frames.
-- The shim's registration is bound to its Unix-socket connection; when the shim
-  exits, the daemon auto-unregisters the instance.
-- On a lost daemon connection the shim reconnects with exponential backoff
-  (200 ms, 500 ms, 1 s, 3 s, 3 s …) for the first 5 s.
-- The shim is stateless: it holds no bus state, only the connection.
+v0.2 surface changes from v0.1:
+
+- `register` gains `persistent` and `on_delivery`; loses `mailbox_size` (spool
+  files are unbounded).
+- `await_message` and `check_inbox` return envelope batches
+  (`{"envelopes": [...]}`) rather than a single envelope. `await_message`
+  returns an empty list on timeout.
+- There is no socket reconnect logic — the shim owns the store connection.
+
+The shim runs a single-threaded synchronous line loop: one JSON-RPC request at
+a time; no async I/O. Each tool call executes synchronously and the response is
+written before the next line is read.
 
 ## Capabilities
 
-- Per-session MCP tool surface for the full bus (register through
-  `list_instances`).
-- A subprocess-friendly shim split from the long-lived daemon (spec §3.1).
-- Connection-bound registration with auto-unregister on shim exit.
-- Resilient reconnect with bounded exponential backoff.
-- The shim never crashes the host MCP client, even when the daemon is down.
-
-## Boundaries
-
-- The shim holds no registry, mailbox, log, or pending-RPC state — all of that
-  lives in the daemon.
-- It does not interpret `payload`.
-- It does not bridge to non-MCP transports; external programs use the REST API
-  (fr:06-rest-api).
-- Routing, correlation, and mailbox semantics are owned by fr:04-router and
-  fr:03-mailbox; the shim only proxies the calls.
-- One shim serves one AI session; it does not multiplex sessions.
+- Full bus access via the nine tools above, without a running daemon.
+- Non-persistent registrations made through the shim are released on stdin EOF
+  (`session.cleanup` unregisters them in order).
+- Abrupt kills and I/O-error exits leave rows behind; pid-liveness sweep
+  (fr:02-instance-registry) reclaims them.
+- `payload` fields that arrive as JSON-encoded strings are transparently parsed
+  into native JSON values before dispatch.
 
 ## Error Handling
 
-- Daemon unavailable (spec §8.1): the shim reconnects with backoff for 5 s.
-  After that, every tool call returns a JSON-RPC error
-  `{"code": -32000, "message": "daemon_unavailable", "data": <detail>}`
-  immediately — `code` is the numeric JSON-RPC code, `daemon_unavailable` is
-  the `message`, and there is no `retryable` field. The shim never panics or
-  exits, so the MCP client stays up.
+- Tool errors are returned as JSON-RPC error objects:
+  `{"code": -32000, "message": "<stable code>", "data": "<human text>"}`.
+  The `message` field carries the stable machine-readable code (e.g.
+  `unknown_instance`, `instance_id_taken`); `data` carries the human-readable
+  detail.
+- On `ask` timeout the error `data` field contains prose including the
+  `request_id`; clients that need the id should call `ask_result` rather than
+  parse the prose.
+- Unknown method: `{"code": -32601, "message": "method not found"}`.
+- Missing required argument: `{"code": -32602, "message": "missing `<key>`"}`.
+- Malformed JSON input lines are logged to stderr and skipped; the loop
+  continues.
+
+## Boundaries
+
+- Single-threaded; concurrent tool calls from one MCP client are serialized by
+  the line loop.
+- The shim does not interpret `payload` content beyond JSON parsing.
+- It does not expose REST endpoints or SSE; external programs use the CLI
+  (fr:10-cli).
+- One shim serves one AI session; it does not multiplex multiple clients.
 
 ## Traceability
 
-- Reference docs: ref:protocol
-- Related FR: fr:01-envelope, fr:02-instance-registry, fr:04-router
+- Related FR: fr:01-envelope, fr:04-router, fr:09-hook-inbox, fr:10-cli
 
 ## When to update
 
-- An MCP tool is added, removed, or its signature changes.
-- The Unix-socket path or IPC frame format changes.
-- The reconnect backoff schedule or the 5 s cutover window changes.
-- The shim gains state or stops being a pure proxy.
+- A tool is added, removed, or its input schema changes.
+- The batch envelope return shape changes.
+- Session cleanup behavior (EOF handling) changes.
+- The shim gains async I/O or multi-threading.
+- The error code format changes.

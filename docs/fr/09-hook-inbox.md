@@ -7,7 +7,7 @@ refs:
     - fr:01-envelope
     - fr:02-instance-registry
   modules:
-    - crates/agentbusd/src/hookinbox.rs
+    - crates/agentbus-core/src/store/spool.rs
     - scripts/inject-inbox.sh
 ---
 
@@ -20,47 +20,65 @@ refs:
 Some workflows cannot or should not block on `await_message` — for example a
 Claude Code session that should pick up pending messages at prompt boundaries
 rather than mid-turn. The hook-driven inbox is a third inbound delivery mode:
-the daemon writes envelopes to a per-instance file, and a hook script reads them
-at `SessionStart` / `UserPromptSubmit` time, injecting their content as context.
+the sender process writes envelopes to a per-instance JSONL file, and a hook
+script reads them at `SessionStart` / `UserPromptSubmit` time, injecting their
+content as context.
+
+In v0.2 the writer is the sender process (fr:04-router), not a daemon. The
+file format and the consumer contract are unchanged from v0.1.
 
 ## User-visible Behavior
 
-- When enabled for an instance, the daemon writes each envelope addressed to it
-  as one JSON line to `$INBOX_DIR/<instance_id>.jsonl`.
-- The daemon opens the file `O_CREATE | O_APPEND` and never truncates it.
-- The shipped reference hook script (`scripts/inject-inbox.sh`) does the read
-  side: it atomically renames `inbox.jsonl` → `inbox.processing.<pid>`, reads
-  and formats the envelopes, emits hook output, then deletes the processing
-  file. The daemon recreates the file on its next write.
-- Only the hook script ever removes the file; the daemon only appends.
-- The reference script ships as a starting point, not a binary — operators are
-  expected to adapt it.
+- The inbox file lives at `$AGENTBUS_DIR/inbox/<instance_id>.jsonl`
+  (default `~/.agentbus/inbox/<instance_id>.jsonl`).
+- The sender opens the file `O_CREATE | O_APPEND`, acquires an exclusive
+  `flock`, verifies that the file descriptor still names the live spool file
+  (same `dev` + `ino`), and writes one complete JSON line per envelope. If a
+  consumer renamed the file between open and lock, the sender reopens and
+  retries — this keeps lock-free shell consumers safe.
+- Consumers use the rename-snapshot contract:
+  1. Rename `<id>.jsonl` → `<id>.processing.<pid>` (atomic).
+  2. Open the processing file and acquire the same exclusive `flock` once, as
+     a barrier ensuring any in-flight sender append completes before reading.
+  3. Read all lines, process, delete the processing file.
+- The shipped reference hook script (`scripts/inject-inbox.sh`) implements
+  this consumer contract for shell use. It requires `AGENTBUS_INSTANCE` and
+  honours `AGENTBUS_INBOX_DIR` as an override; the default matches the store
+  path above.
+- Senders never delete inbox files. Consumers (the hook script or the Rust
+  `check_inbox` / `await_message` calls) are the sole removers.
+- `agentbus sweep --purge-orphans` removes inbox files whose instance id has
+  no live registration.
 
 ## Capabilities
 
-- A non-blocking, file-backed inbound mode complementing `await_message`
-  (fr:08-mcp-shim) and the inbox SSE stream (fr:07-sse).
-- Race-free hand-off via atomic rename: the daemon appends, the hook script
-  consumes a renamed snapshot.
+- Non-blocking, file-backed inbound mode complementing `await_message` and
+  `check_inbox` (fr:08-mcp-shim, fr:10-cli).
+- Race-free hand-off via atomic rename, with an flock barrier on the consumer
+  side so in-flight appends are not lost.
+- Dev+ino reopen loop on the sender side keeps lock-free shell consumers safe.
 - One file per instance, named by `instance_id`.
 - A reference hook script operators can adapt to their client's hook system.
 
 ## Boundaries
 
 - The inbox files are not the durable event log (fr:05-eventlog) and have no
-  replay semantics; once consumed by the hook script they are gone.
-- The daemon never truncates or deletes inbox files — consumption is entirely
-  the hook script's responsibility.
-- agentbus ships only a reference hook script, not a packaged integration; the
-  operator wires it into their client's hook configuration.
-- This mode does not provide ordering or delivery guarantees beyond append
-  order within a single file.
+  replay semantics; once consumed they are gone.
+- Senders never truncate or delete inbox files — consumption is the consumer's
+  responsibility.
+- agentbus ships only a reference hook script; operators wire it into their
+  client's hook configuration.
+- Ordering within one file is append order; there is no cross-instance
+  ordering guarantee.
 
 ## Error Handling
 
-- Hook-injection races (spec §8.9): the daemon writes with `O_APPEND`; the hook
-  script reads only after an atomic rename, and the daemon never truncates.
-  This keeps the append side and the consume side from racing on the same file.
+- Sender open/flock/write errors are surfaced as `StoreError::Io` after the
+  event_log commit (partial-failure path; see fr:04-router).
+- Consumer: corrupt JSONL lines (unparseable JSON) are skipped with a warning;
+  well-formed lines before and after are still delivered.
+- The `flock` call is retried on `EINTR` (signal interrupt); it does not use
+  `LOCK_NB`.
 
 ## Traceability
 
@@ -68,7 +86,8 @@ at `SessionStart` / `UserPromptSubmit` time, injecting their content as context.
 
 ## When to update
 
-- The inbox file path layout or naming changes.
-- The daemon's write flags or append-only contract change.
-- The atomic-rename hand-off protocol changes.
-- The reference hook script's interface changes.
+- The inbox directory path default changes.
+- The flock protocol (exclusive lock, dev+ino reopen) changes.
+- The atomic-rename consumer contract changes.
+- The reference hook script's interface or environment variables change.
+- Senders gain the ability to delete inbox files.
