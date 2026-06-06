@@ -5,6 +5,8 @@ refs:
   title: "Daemon lifecycle, configuration, and security (superseded)"
   related:
     - fr:05-eventlog
+    - fr:12-store
+    - fr:15-sweep
 ---
 
 # Daemon lifecycle, configuration, and security (superseded)
