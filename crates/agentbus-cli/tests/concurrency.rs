@@ -33,7 +33,12 @@ fn concurrent_senders_lose_nothing() {
                     .spawn()
                     .unwrap();
                 let payload = format!(r#"{{"w":{w},"i":{i}}}"#);
-                child.stdin.as_mut().unwrap().write_all(payload.as_bytes()).unwrap();
+                child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(payload.as_bytes())
+                    .unwrap();
                 drop(child.stdin.take());
                 assert!(child.wait().unwrap().success(), "send w={w} i={i}");
             }
@@ -61,7 +66,11 @@ fn concurrent_senders_lose_nothing() {
         .unwrap();
     let seqs: Vec<i64> = String::from_utf8_lossy(&out.stdout)
         .lines()
-        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["seq"].as_i64().unwrap())
+        .map(|l| {
+            serde_json::from_str::<serde_json::Value>(l).unwrap()["seq"]
+                .as_i64()
+                .unwrap()
+        })
         .collect();
     assert_eq!(seqs.len() as u64, total);
     let mut deduped = seqs.clone();
