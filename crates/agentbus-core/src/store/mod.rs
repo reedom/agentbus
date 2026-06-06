@@ -15,7 +15,7 @@ pub use error::StoreError;
 pub use events::{EventFilter, EventsPage, SeqEnvelope};
 pub use hook::HookOutcome;
 pub use instances::{InstanceRow, RegisterOpts};
-pub use messages::Delivered;
+pub use messages::{AskReply, AskStatus, Delivered};
 pub use paths::base_dir;
 
 use std::path::{Path, PathBuf};
