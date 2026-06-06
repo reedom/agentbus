@@ -136,3 +136,49 @@ fn sweep_prints_report() {
     assert_eq!(out["dead_instances"], serde_json::json!([]));
     assert_eq!(out["purged_inboxes"], serde_json::json!([]));
 }
+
+#[test]
+fn watch_streams_new_envelopes_without_consuming() {
+    use std::io::BufRead;
+
+    let tmp = tempfile::tempdir().unwrap();
+    agentbus(tmp.path(), &["register", "bob", "--persistent"], None);
+    // Pre-existing traffic must NOT be replayed by watch.
+    agentbus(tmp.path(), &["send", "bob"], Some(r#"{"old":1}"#));
+
+    let mut watcher = Command::new(env!("CARGO_BIN_EXE_agentbus"))
+        .env("AGENTBUS_DIR", tmp.path())
+        .args(["watch", "bob", "--interval-ms", "50"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = watcher.stdout.take().unwrap();
+
+    // Read one line on a thread so the test can time out instead of hanging.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        let _ = tx.send(line);
+    });
+
+    // Give the watcher a moment to record its starting cursor.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    agentbus(tmp.path(), &["send", "bob"], Some(r#"{"fresh":1}"#));
+
+    let line = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("watch line within 5s");
+    let env: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(env["payload"]["fresh"], 1, "no replay of old traffic");
+    assert_eq!(env["to"], "bob");
+
+    watcher.kill().unwrap();
+    watcher.wait().unwrap();
+
+    // watch is a notifier only: both messages still consumable (spec 6.7).
+    let inbox = stdout_json(&agentbus(tmp.path(), &["check-inbox", "bob"], None));
+    assert_eq!(inbox["envelopes"].as_array().unwrap().len(), 2);
+}
