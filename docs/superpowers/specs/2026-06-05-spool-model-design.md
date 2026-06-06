@@ -172,7 +172,30 @@ agents with `on_delivery = "bellhop dispatch <name>"`.
 - `await_message(timeout)`: poll own inbox file for nonzero size (same
   backoff as 6.3), then consume as `check_inbox`.
 
-### 6.7 sweep (crash recovery, optional)
+### 6.7 watch (recipient-side stream, optional)
+
+`agentbus watch <instance_id>` is a long-running reader for harnesses that
+can host a persistent monitor process and re-invoke an idle agent on its
+output (e.g. Claude Code's Monitor tool; prior art: agmsg's `monitor`
+delivery mode). It tails `event_log` for envelopes addressed to the
+instance (same cursor-and-poll loop as `events --follow`) and prints one
+line per envelope, with body newlines escaped so each message arrives as
+a single event.
+
+`watch` never consumes the inbox. It is a notifier only: the agent reacts
+by calling `check_inbox`, which consumes under the fr:09 rename-snapshot
+contract. Keeping notify and consume separate means a watcher dying
+mid-stream loses nothing -- the spool remains the source of truth.
+
+Boundaries: agentbus ships only the verb. Watcher lifecycle -- launching
+from a session-start hook, deduplicating across session restarts,
+cleaning up orphans -- belongs to the integrating harness package
+(cmux-bellhop, or an agmsg-style hook set), not the bus. `watch` fills
+the gap the other mechanisms leave for an idle interactive session:
+`on_delivery` is sender-side and bounded (15 s), `await_message` blocks a
+tool call, `check_inbox` is pull-only.
+
+### 6.8 sweep (crash recovery, optional)
 
 `agentbus sweep` is a periodic CLI (launchd interval, e.g. 60 s), not a
 resident. It: removes dead non-persistent instance rows; re-runs
@@ -189,7 +212,7 @@ optional -- without it the same recovery happens lazily at the next send.
 | `agentbus-core` | envelope, ids, registry, mailbox, router, eventlog (in-memory) | envelope, ids unchanged; new `store` module (rusqlite) absorbing registry/router/eventlog semantics; mailbox deleted (inbox files are the mailbox) |
 | `agentbusd` | HTTP/SSE/UDS daemon | **deleted** |
 | `agentbus-stdio` | MCP shim over UDS client | MCP shim over `store` directly; `uds_client.rs` deleted |
-| `agentbus-cli` | REST client | thin wrapper over `store`; gains `ask-result`, `sweep`, `register --persistent --on-delivery` |
+| `agentbus-cli` | REST client | thin wrapper over `store`; gains `ask-result`, `watch`, `sweep`, `register --persistent --on-delivery` |
 
 New dependency: `rusqlite` (bundled). Deleted: axum/hyper server stack.
 
@@ -226,13 +249,17 @@ New dependency: `rusqlite` (bundled). Deleted: axum/hyper server stack.
 | fr:07 sse | deleted with a superseded-by note |
 | fr:08 mcp-shim | rewritten: direct store access |
 | fr:09 hook-inbox | minor edit: writer is now the sender, contract identical |
-| fr:10 cli | extended: ask-result, sweep, register flags |
+| fr:10 cli | extended: ask-result, watch, sweep, register flags |
 | fr:11 daemon-lifecycle | deleted; replaced by new fr: store layout and locking |
 | new fr:12 | store layout, schema, concurrency rules (section 5) |
 | new fr:13 | on_delivery execution contract (section 6.5) |
-| new fr:14 | sweep (section 6.7) |
+| new fr:14 | watch notifier contract (section 6.7) |
+| new fr:15 | sweep (section 6.8) |
 
-`docs/reference/protocol.md` is rewritten around the store operations.
+`docs/reference/protocol.md` is rewritten around the store operations. A
+new `docs/reference/` integration note documents the watch-plus-monitor
+pattern for interactive harnesses (session-start hook launches `watch`
+under the harness's monitor facility; lifecycle owned by the harness).
 
 ## 11. Testing
 
