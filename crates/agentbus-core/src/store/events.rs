@@ -51,7 +51,10 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT seq, envelope FROM event_log WHERE ?1 < seq ORDER BY seq LIMIT ?2")?;
-        let rows = stmt.query_map(params![after_seq, limit as i64], |r| {
+        // A wrapping cast could turn a huge usize negative, which SQLite
+        // reads as "no LIMIT"; saturate instead.
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(params![after_seq, limit], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
         })?;
         let mut page = EventsPage {
@@ -183,6 +186,25 @@ mod tests {
             .unwrap()
             .events
             .is_empty());
+    }
+
+    #[test]
+    fn to_filter_includes_addressed_envelopes() {
+        // Positive path: a Message row addressed to bob matches the filter.
+        let (_tmp, mut store) = test_store();
+        store.publish_event("alice", json!({"x": 1})).unwrap();
+        let msg =
+            crate::store::new_envelope(Kind::Message, "alice", Some("bob"), json!({"hello": true}));
+        store
+            .with_tx(|tx| crate::store::append_event(tx, &msg))
+            .unwrap();
+        let to_bob = EventFilter {
+            to: Some("bob".into()),
+            ..Default::default()
+        };
+        let page = store.events_since(0, 100, &to_bob).unwrap();
+        assert_eq!(page.events.len(), 1);
+        assert_eq!(page.events[0].envelope.id, msg.id);
     }
 
     #[test]
