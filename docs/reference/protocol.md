@@ -40,16 +40,17 @@ Every message on every surface is an envelope. See [fr:01-envelope](../fr/01-env
 
 | Field | Required for | Notes |
 |---|---|---|
-| `id` | all | ULID, server-assigned at ingress |
+| `id` | all | ULID, stamped by the sending process |
 | `kind` | all | `message`, `ask`, `reply`, `event` |
 | `from` | all | sender `instance_id`, or `ext:<label>` for unregistered callers |
 | `to` | `message`, `ask`, `reply` | absent / null for broadcast `event` |
 | `request_id` | `reply` (required), optional on `ask` | correlates a reply to its ask |
-| `timeout_ms` | `ask` | clamped to `[1000, 86_400_000]` |
-| `ts` | all | RFC3339 UTC, server-assigned at ingress |
+| `timeout_ms` | `ask` | honored verbatim, no clamping (CLI and shim default to 30 000) |
+| `ts` | all | RFC3339 UTC, stamped by the sending process |
 | `payload` | all | opaque JSON; the bus never interprets it |
 
-`id` and `ts` are always overwritten at ingress. Callers may omit them.
+`id` and `ts` are always stamped by the sender; caller-supplied values are
+ignored.
 
 ### 1.1 Kind semantics
 
@@ -73,7 +74,7 @@ crate). See [fr:12-store](../fr/12-store.md) for the schema and concurrency rule
 | Operation | Semantics | Key error codes |
 |---|---|---|
 | `register(id, persistent?, on_delivery?)` | Claim an instance id. Non-persistent rows are anchored to the caller's pid (fr:02). | `instance_id_taken`, `invalid_instance_id` |
-| `unregister(id)` | Remove a registration; inbox file is kept. | `unknown_instance` |
+| `unregister(id)` | Remove a registration; inbox file is kept. An absent row is not an error: it reports `ok: false`. | — |
 | `list()` | Return all rows with liveness status. | — |
 | `send(from, to, payload)` | One-way message: check recipient, log to event_log, append to inbox spool, fire on_delivery hook. Returns the envelope id. | `unknown_instance` |
 | `ask(from, to, payload, timeout_ms?)` | RPC send + poll asks table for reply. Blocks until reply or timeout. | `unknown_instance`, `timeout` |
@@ -90,7 +91,7 @@ crate). See [fr:12-store](../fr/12-store.md) for the schema and concurrency rule
 
 | Code | When |
 |---|---|
-| `unknown_instance` | send/ask/reply/check_inbox finds no registration for the target |
+| `unknown_instance` | send/ask finds no registration for the recipient |
 | `instance_id_taken` | register finds an existing live owner (non-persistent collision) |
 | `invalid_instance_id` | id fails `[A-Za-z0-9_.:-]{1,128}` |
 | `timeout` | ask polling deadline elapsed before a reply arrived |

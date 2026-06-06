@@ -90,9 +90,8 @@ The `with_seq = false` flag in `stream_events` selects this shape.
   separate `check_inbox` or `await_message` call (fr:09-hook-inbox).
 - Watcher lifecycle — launching from session-start hooks, deduplicating
   across session restarts, orphan cleanup — belongs to the integrating
-  harness, not the bus. The integration pattern is documented in the watch
-  integration reference doc (the watch integration reference, to be created
-  in the next task).
+  harness, not the bus. The integration pattern is documented in the
+  watch-integration reference doc (ref:watch-integration).
 - Watch does not filter by kind; it shows all envelope kinds addressed to
   the instance (messages, asks, replies, events).
 - The 500 ms default poll means notification latency is up to 500 ms.

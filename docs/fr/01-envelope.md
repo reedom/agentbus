@@ -13,14 +13,15 @@ refs:
 
 # FR 01: Message envelope and wire format
 
-> The single canonical JSON envelope carried uniformly across REST, SSE, MCP stdio, and the persistent log.
+> The single canonical JSON envelope carried uniformly across the MCP shim, the CLI, the inbox spool files, and the event log.
 
 ## Purpose
 
 agentbus uses one message format on every surface. The envelope is the contract
 between any pair of participants — AI instances, humans on the CLI, and external
-programs — and between the daemon and its own log. A uniform format means a
-caller learns the shape once and reuses it for REST, SSE, MCP tools, and replay.
+programs — and between the store and its own log. A uniform format means a
+caller learns the shape once and reuses it for MCP tools, CLI verbs, hook-inbox
+consumption, and event replay.
 
 ## User-visible Behavior
 
@@ -28,18 +29,19 @@ Every message is an envelope with these fields:
 
 | Field | Required for | Notes |
 |---|---|---|
-| `id` | all | ULID, server-assigned at ingress |
+| `id` | all | ULID, stamped by the sending process |
 | `kind` | all | `message`, `ask`, `reply`, `event` |
 | `from` | all | sender `instance_id`, or `ext:<label>` for unregistered talkers |
 | `to` | `message`, `ask`, `reply` | absent / null for broadcast `event` |
 | `request_id` | `reply` (required), optional on `ask` | correlates a reply to its ask |
-| `timeout_ms` | `ask` | clamped to `[1000, 86_400_000]` |
-| `ts` | all | RFC3339 UTC, server-assigned at ingress |
+| `timeout_ms` | `ask` | honored verbatim; no clamping (CLI and shim default to 30 000) |
+| `ts` | all | RFC3339 UTC, stamped by the sending process |
 | `payload` | all | opaque JSON; the bus never interprets it |
 
-`id` and `ts` are always overwritten by the daemon at ingress, regardless of
-what the caller supplied. This prevents id forgery and gives a single
-authoritative ordering. Callers may omit both fields.
+`id` and `ts` are always stamped by the sender's store call, regardless of
+what the caller supplied at the tool/CLI layer. Global ordering does not
+depend on `ts`: the event log's transactionally assigned `seq` is the
+authoritative order (fr:05-eventlog).
 
 Kind semantics:
 
@@ -48,14 +50,15 @@ Kind semantics:
   until `timeout_ms` elapses.
 - **reply** — answer to an earlier `ask`; `request_id` matches the ask's `id`,
   `from`/`to` are the reverse of the ask.
-- **event** — broadcast with no recipient; reaches SSE subscribers and the log.
+- **event** — broadcast with no recipient; reaches the event log, `events
+  --follow`, and `watch` streams.
 
 ## Capabilities
 
 - One envelope type serialized identically on every surface.
 - ULID `id` is sortable and collision-safe; it doubles as a dedup key.
-- Server-assigned `id` and `ts` give a forge-proof, monotonic ordering.
-- `timeout_ms` is clamped into a safe range rather than rejected.
+- Compact JSON serialization keeps one envelope on one line (newlines inside
+  strings are escaped), which the spool and stream surfaces rely on.
 - `payload` is fully opaque — any JSON value is accepted and passed through.
 - `ext:<label>` addressing lets unregistered programs participate as senders.
 
@@ -65,19 +68,21 @@ Kind semantics:
 - The envelope carries no schema, versioning, or content-type for `payload` —
   that is a concern for the participants.
 - No authentication or signing of envelopes; identity in `from` is asserted,
-  not verified (auth is post-v1 future work, spec §13).
-- The envelope does not encode delivery guarantees; durability is best-effort
-  plus replay (spec §1.1).
-- `payload` size is bounded at ingress (default 64 KB); larger payloads are
-  rejected — see Error Handling.
+  not verified. The trust boundary is the 0700 store directory (fr:12-store):
+  every participant is the same OS user.
+- The envelope does not encode delivery guarantees; durability comes from the
+  event log and inbox spool (fr:05-eventlog, fr:09-hook-inbox).
+- There is no payload size limit in v0.2. v0.1's daemon enforced a 64 KB cap
+  at ingress; the spool model dropped it (no resident process to protect).
+  Reintroduce a cap if oversized payloads become a problem (fr:05-eventlog
+  Boundaries).
 
 ## Error Handling
 
-- Payload cap (spec §8.10): the daemon rejects any envelope whose `payload`
-  exceeds the configured byte limit (default 65536, `AGENTBUS_LOG_MAX_PAYLOAD`).
-  The cap bounds per-line log size and per-event memory.
-- `timeout_ms` outside `[1000, 86_400_000]` is clamped to the nearest bound
-  rather than treated as an error.
+- Structural validation (`Envelope::validate`): `ask`/`message` require `to`;
+  `reply` requires `to` and `request_id`; `event` must not have `to`; `from`
+  and `id` must be non-empty. Violations surface as `invalid_envelope`.
+- `timeout_ms` is not validated or clamped; absurd values are honored.
 
 ## Traceability
 
@@ -89,4 +94,4 @@ Kind semantics:
 - A field is added, removed, or renamed on the envelope.
 - A new `kind` value is introduced or kind semantics change.
 - The id scheme (ULID) or timestamp format changes.
-- The default payload cap or its clamping behavior changes.
+- A payload size limit is introduced.
