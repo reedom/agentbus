@@ -61,8 +61,9 @@ impl Store {
                     |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)),
                 )
                 .optional()?;
-            // Only a LIVE non-persistent row owned by a different pid blocks
-            // us. Dead rows are replaced; same-pid and persistent rows upsert.
+            // Collision: only a non-persistent row with a live pid different
+            // from ours. Persistent rows (pid = NULL) and dead rows always
+            // yield to the caller (single-user trust model, spec 6.1).
             if let Some((Some(old_pid), false)) = existing {
                 if pid_alive(old_pid) && pid != Some(old_pid) {
                     return Err(StoreError::InstanceIdTaken(id.to_string()));
@@ -96,6 +97,7 @@ impl Store {
         })
     }
 
+    /// Liveness is checked per-row after the query and may lag by milliseconds.
     pub fn list_instances(&self) -> Result<Vec<InstanceRow>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, pid, persistent, on_delivery, registered_at
@@ -130,6 +132,16 @@ mod tests {
         RegisterOpts::default()
     }
 
+    /// Kills the child even when the test panics before reaching cleanup.
+    struct KillOnDrop(std::process::Child);
+
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
     #[test]
     fn register_and_list_roundtrip() {
         let (_tmp, mut store) = test_store();
@@ -152,23 +164,24 @@ mod tests {
     #[test]
     fn live_foreign_pid_collides() {
         let (_tmp, mut store) = test_store();
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
+        let child = KillOnDrop(
+            std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap(),
+        );
         let foreign = RegisterOpts {
-            pid: Some(child.id() as i32),
+            pid: Some(child.0.id() as i32),
             ..opts()
         };
         store.register("alice", &foreign).unwrap();
         let err = store.register("alice", &opts()).unwrap_err();
         assert!(matches!(err, StoreError::InstanceIdTaken(_)));
-        child.kill().unwrap();
-        child.wait().unwrap();
     }
 
     #[test]
     fn dead_pid_row_is_replaced() {
+        // Theoretical pid-reuse race (spec open question 3): acceptable here.
         let (_tmp, mut store) = test_store();
         let mut child = std::process::Command::new("true").spawn().unwrap();
         let pid = child.id() as i32;
