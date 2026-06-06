@@ -64,6 +64,10 @@ impl Store {
 
     /// Spec 6.3: as send, plus an asks row; then poll for the reply with
     /// 50 ms -> 250 ms backoff. On expiry the row stays for ask_result.
+    ///
+    /// The poll deadline (monotonic, starts after delivery work) and the
+    /// row's expires_at (wall clock, anchored at envelope ts) can drift by
+    /// a few milliseconds: a just-timed-out ask may briefly read as Pending.
     pub fn ask(
         &mut self,
         from: &str,
@@ -72,7 +76,7 @@ impl Store {
         timeout: Duration,
     ) -> Result<AskReply, StoreError> {
         let mut env = new_envelope(Kind::Ask, from, Some(to), payload);
-        env.timeout_ms = Some(timeout.as_millis() as u64);
+        env.timeout_ms = Some(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX));
         env.validate()?;
         let expires_at = super::rfc3339(&(env.ts + timeout));
         let on_delivery = self.with_tx(|tx| {
@@ -290,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn ask_result_reports_pending_then_expired() {
+    fn ask_result_reports_expired_after_timeout() {
         let (_tmp, mut store) = test_store();
         store.register("bob", &RegisterOpts::default()).unwrap();
         let err = store
