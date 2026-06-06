@@ -5,7 +5,8 @@
 mod error;
 mod instances;
 mod liveness;
-mod paths;
+pub(crate) mod paths;
+mod spool;
 
 pub use error::StoreError;
 pub use instances::{InstanceRow, RegisterOpts};
@@ -88,7 +89,7 @@ impl Store {
 }
 
 /// Stamp id and ts (spec 6.2): senders assign both.
-#[allow(dead_code)] // used from Task 3 onward
+#[allow(dead_code)] // production use from Task 5 onward (tests use it now)
 pub(crate) fn new_envelope(
     kind: Kind,
     from: &str,

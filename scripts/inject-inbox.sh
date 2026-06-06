@@ -5,7 +5,7 @@
 set -euo pipefail
 
 INSTANCE=${AGENTBUS_INSTANCE:?AGENTBUS_INSTANCE required}
-INBOX_DIR=${AGENTBUS_INBOX_DIR:-${XDG_RUNTIME_DIR:-/tmp}/agentbus/inbox}
+INBOX_DIR=${AGENTBUS_INBOX_DIR:-$HOME/.agentbus/inbox}
 SRC="$INBOX_DIR/$INSTANCE.jsonl"
 [ -f "$SRC" ] || exit 0
 
