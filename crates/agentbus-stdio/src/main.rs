@@ -48,7 +48,8 @@ fn main() -> anyhow::Result<()> {
         stdout.flush()?;
     }
     // Stdin closed: release this session's non-persistent registrations.
-    // Pid liveness covers abrupt kills (spec section 12, item 4).
+    // Abrupt kills and the I/O-error early returns above skip this; the
+    // pid-liveness sweep reclaims those rows (spec section 12, item 4).
     session.cleanup(&mut store);
     Ok(())
 }
