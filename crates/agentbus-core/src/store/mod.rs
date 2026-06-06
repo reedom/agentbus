@@ -4,6 +4,7 @@
 
 mod error;
 mod events;
+mod hook;
 mod instances;
 mod liveness;
 mod messages;
@@ -12,18 +13,10 @@ mod spool;
 
 pub use error::StoreError;
 pub use events::{EventFilter, EventsPage, SeqEnvelope};
+pub use hook::HookOutcome;
 pub use instances::{InstanceRow, RegisterOpts};
 pub use messages::Delivered;
 pub use paths::base_dir;
-
-/// Removed in Task 6 when store/hook.rs lands.
-pub(crate) mod hook_outcome_placeholder {
-    #[derive(Debug, Clone, serde::Serialize)]
-    pub struct HookOutcome {
-        pub ok: bool,
-        pub detail: String,
-    }
-}
 
 use std::path::{Path, PathBuf};
 

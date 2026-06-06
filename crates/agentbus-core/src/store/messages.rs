@@ -13,25 +13,35 @@ use super::{append_event, new_envelope, spool, Store, StoreError};
 #[derive(Debug, Serialize)]
 pub struct Delivered {
     pub envelope: crate::envelope::Envelope,
-    /// Set when the recipient registered an on_delivery hook (Task 6 wires
-    /// the actual execution; until then this stays None).
+    /// Outcome of the recipient's on_delivery hook, when one is registered.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hook: Option<super::hook_outcome_placeholder::HookOutcome>,
+    pub hook: Option<super::hook::HookOutcome>,
 }
 
 impl Store {
+    /// Spec 6.2: log inside the tx, then spool + on_delivery outside it.
+    ///
+    /// Partial failure: if the spool append fails after the event_log
+    /// commit, the envelope is logged but not delivered; sweep (spec 6.8)
+    /// re-fires on_delivery for stuck inboxes. A retry sends a NEW envelope.
     pub fn send(&mut self, from: &str, to: &str, payload: Value) -> Result<Delivered, StoreError> {
         let env = new_envelope(Kind::Message, from, Some(to), payload);
         env.validate()?;
-        let _on_delivery = self.with_tx(|tx| {
+        let on_delivery = self.with_tx(|tx| {
             let cmd = on_delivery_of(tx, to)?;
             append_event(tx, &env)?;
             Ok(cmd)
         })?;
-        spool::append(&self.base, to, &env)?;
+        if let Err(e) = spool::append(&self.base, to, &env) {
+            // The envelope IS committed to event_log; surface that fact so
+            // operators can judge retry safety (a retry re-stamps a new id).
+            tracing::warn!(envelope_id = %env.id, error = %e, "inbox spool append failed after event_log commit");
+            return Err(e);
+        }
+        let hook = on_delivery.map(|cmd| self.run_delivery_hook(&cmd, to, &env));
         Ok(Delivered {
             envelope: env,
-            hook: None,
+            hook,
         })
     }
 }
@@ -60,6 +70,8 @@ mod tests {
         let delivered = store.send("alice", "bob", json!({"hi": 1})).unwrap();
         assert!(delivered.envelope.id.starts_with("msg_"));
         assert_eq!(delivered.envelope.kind, Kind::Message);
+        assert_eq!(delivered.envelope.from, "alice");
+        assert_eq!(delivered.envelope.to.as_deref(), Some("bob"));
         assert!(delivered.hook.is_none()); // no on_delivery registered
                                            // event_log holds the same envelope...
         let page = store.events_since(0, 10, &EventFilter::default()).unwrap();
