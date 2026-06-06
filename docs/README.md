@@ -3,77 +3,70 @@
 An MCP-native message bus that lets MCP-capable AI instances talk to and listen
 to other AI instances, humans, and arbitrary external programs.
 
+agentbus v0.2 is daemonless: all state lives in `~/.agentbus/` (SQLite +
+inbox spool files). Participants open the store directly — there is nothing to
+launch.
+
 - Functional requirements: [fr/index.md](fr/index.md)
-- Wire protocol + REST + MCP tools: [reference/protocol.md](reference/protocol.md)
-- Examples: [reference/](reference/)
+- Wire protocol, store operations, and MCP tool surface: [reference/protocol.md](reference/protocol.md)
+- Integration examples: [reference/](reference/)
 
-## Install (Claude Code users)
-
-Add the marketplace and install the plugin:
+## Install
 
 ```bash
-claude plugin marketplace add github.com/reedom/agentbus
-claude plugin install agentbus
+cargo install agentbus-cli agentbus-stdio
 ```
 
-Then in Claude Code, run the install slash command to fetch the daemon
-and shim binaries from crates.io and start the daemon:
-
-```
-/agentbus:install
-```
-
-That command runs `cargo install --locked agentbusd agentbus-stdio agentbus-cli`,
-verifies the binaries are on PATH, and launches `agentbusd` on
-`127.0.0.1:8765`. Restart Claude Code so the `agentbus` MCP server picks
-up the new `agentbus-stdio` binary.
-
-## Build from source (contributors)
+Register an instance and send a message:
 
 ```bash
-cargo build --release
-./target/release/agentbusd &
-./scripts/smoke-curl.sh
+agentbus register my-agent --persistent
+echo '{"hello": "world"}' | agentbus send my-agent --from ext:cli
+agentbus check-inbox my-agent
 ```
 
-To wire a locally built shim without using the marketplace plugin, add
-to `.mcp.json`:
+To use the MCP shim from Claude Code, add to `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "agentbus": {
       "type": "stdio",
-      "command": "/absolute/path/to/agentbus-stdio"
+      "command": "agentbus-stdio"
     }
   }
 }
 ```
 
-## What's here
+### Security note: on_delivery hook
 
-- `fr/` — functional requirement docs, one per product feature, tracked by the
-  `kusara` cross-reference graph. See `fr/README.md`.
-- `reference/protocol.md` — the envelope schema, REST endpoint table, and MCP
-  tool table, with example payloads for each surface.
-- `reference/slack-bridge.md` — how to bridge `ask` calls to a human in Slack and
-  return their interactive button choice as the reply.
-- `reference/extbot-integration.md` — how an external orchestrator (`extbot`) can
-  inject events and ask questions of a Claude registered as `extbot-<ticket>`.
-- `../skills/agentbus/SKILL.md` — a Claude Code skill that teaches AI agents
-  the workflow, tool-choice matrix, and gotchas for using the MCP surface.
-  Loaded automatically by the plugin.
-- `../commands/install.md` — the `/agentbus:install` slash command that
-  installs the daemon and shim from crates.io. Explicit-invocation only;
-  does not auto-trigger.
+When an instance is registered with `on_delivery = "<command>"`, the sender's
+process runs that shell command after each inbox append. The command executes
+as the same OS user — it is arbitrary user code, not a sandbox. Register
+`on_delivery` only with commands you trust in your own environment. This is
+documented in spec section 9 and [fr:13-on-delivery](fr/13-on-delivery.md).
 
 ## Surfaces at a glance
 
 | Surface | Audience | Transport |
 |---|---|---|
-| MCP shim (`agentbus-stdio`) | MCP-capable AI clients | stdio + Unix socket |
-| REST (`/v1`) on `127.0.0.1` | External programs, bridges, CLI | HTTP |
-| SSE (`/v1/events`, `/v1/instances/{id}/inbox`) | Subscribers, dashboards | HTTP long-lived |
-| Hook-driven inbox | Workflows without blocking `await_message` | JSONL files |
+| MCP shim (`agentbus-stdio`) | MCP-capable AI clients | stdin/stdout JSON-RPC |
+| CLI (`agentbus`) | Humans, shell scripts, external programs | subcommand per verb |
+| Hook-driven inbox | Workflows at prompt/session boundaries | JSONL spool files |
+| Watch streaming | Harnesses with a persistent monitor facility | event-log tail |
 
-All four surfaces speak the same envelope format.
+All surfaces speak the same envelope format.
+
+## What's here
+
+- `fr/` — functional requirement docs, one per product feature, tracked by the
+  `kusara` cross-reference graph. See `fr/README.md`.
+- `reference/protocol.md` — the envelope schema, store operation table, and
+  MCP tool table, with CLI examples for each verb.
+- `reference/watch-integration.md` — the watch-plus-monitor pattern for
+  interactive harnesses (session-start hook launches `watch` under the
+  harness's monitor facility; lifecycle owned by the harness).
+- `reference/slack-bridge.md` — how to bridge `ask` calls to a human in Slack
+  and return their interactive button choice as the reply.
+- `reference/extbot-integration.md` — how an external orchestrator (`extbot`)
+  can inject events and ask questions of a Claude registered as `extbot-<ticket>`.

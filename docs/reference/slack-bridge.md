@@ -18,44 +18,47 @@ This is the concrete realization of spec section 7.3.
 ## 1. Topology
 
 ```
-AI (Claude)              agentbusd                 Slack bridge          Slack
-   |                       |                          |                    |
-   |--- ask("slack-ask") ->|                          |                    |
-   |                       |--- envelope on inbox --->|                    |
-   |                       |                          |--- chat.postMessage with buttons -->|
-   |                       |                          |                    |
-   |                       |                          |<-- interaction payload (button click) --|
-   |                       |<-- POST /replies --------|                    |
-   |<------ reply ---------|                          |                    |
+AI (Claude)           store (~/.agentbus)        Slack bridge          Slack
+   |                        |                         |                   |
+   |--- ask("slack-ask") -->|                         |                   |
+   |                        |--- inbox append -------->|                   |
+   |                        |--- on_delivery hook ---->|                   |
+   |                        |                         |--- chat.postMessage with buttons -->|
+   |                        |                         |                   |
+   |                        |                         |<-- interaction payload (button click) --|
+   |                        |<-- reply written --------|                   |
+   |<------ reply ----------|                         |                   |
 ```
 
-The bridge is a small program (Node, Go, Rust — anything that speaks HTTP and
-SSE) that:
+The bridge is a small program (Node, Go, Rust — anything that can call the
+`agentbus` CLI or embed `agentbus-core`) that:
 
-1. Registers as `slack-ask` against the daemon.
-2. Subscribes to its own inbox via SSE.
-3. Posts an interactive Slack message for every inbound `ask`.
-4. Posts a `reply` to the daemon when the human clicks a button.
+1. Registers as `slack-ask` with `on_delivery` set to the bridge's wakeup command.
+2. On delivery wake, calls `agentbus check-inbox slack-ask` to drain the inbox.
+3. Posts an interactive Slack message for every inbound `ask` envelope.
+4. Calls `agentbus reply` when the human clicks a button.
 
-## 2. Register and subscribe
+## 2. Register with on_delivery
 
-The bridge registers via REST. The HTTP connection's keep-alive holds the
-registration.
+The bridge registers once at startup. `on_delivery` tells the sender's process
+to run the bridge's wakeup command after each inbox append.
 
 ```bash
-curl -N -X POST http://127.0.0.1:PORT/v1/instances \
-     -H 'content-type: application/json' \
-     -d '{"instance_id": "slack-ask", "mailbox_size": 64}'
+agentbus register slack-ask \
+  --persistent \
+  --on-delivery "bellhop dispatch slack-ask"
+# {"ok": true}
 ```
 
-While that connection stays open, the bridge also opens an inbox SSE stream on
-a second connection owned by the same process:
+**Security note**: `on_delivery` is arbitrary code run by the sender's OS user.
+Register it only with commands you trust. See [fr:13-on-delivery](../fr/13-on-delivery.md).
+
+On each delivery the wakeup command fires (15 s cap), then the bridge calls:
 
 ```bash
-curl -N http://127.0.0.1:PORT/v1/instances/slack-ask/inbox
+agentbus check-inbox slack-ask
+# {"envelopes": [...]}
 ```
-
-Each line of the SSE stream is a JSON envelope addressed to `slack-ask`.
 
 ## 3. AI side: ask the human
 
@@ -63,8 +66,9 @@ The Claude orchestrator calls the `ask` MCP tool:
 
 ```jsonc
 {
+  "from": "orch",
   "to": "slack-ask",
-  "timeout_secs": 1800,
+  "timeout_ms": 1800000,
   "payload": {
     "question": "Deploy build 4321 to production?",
     "options": ["deploy", "hold"]
@@ -72,12 +76,12 @@ The Claude orchestrator calls the `ask` MCP tool:
 }
 ```
 
-The daemon enqueues the envelope to `slack-ask`'s inbox and arms a 30-minute
-timeout.
+The store appends the envelope to `slack-ask`'s inbox spool and fires the
+`on_delivery` hook. The asker polls for a reply in the `asks` table.
 
 ## 4. Bridge side: post to Slack
 
-The bridge receives an envelope like:
+The bridge drains its inbox and finds an envelope like:
 
 ```json
 {
@@ -142,18 +146,16 @@ webhook URL when the user clicks a button. The relevant fields:
 ```
 
 The bridge extracts `block_id` (the original `ask` envelope `id`) and posts a
-`reply` to the daemon:
+`reply` via the CLI:
 
 ```bash
-curl -X POST http://127.0.0.1:PORT/v1/instances/slack-ask/replies \
-     -H 'content-type: application/json' \
-     -d '{
-       "request_id": "msg_01HXY_ASK",
-       "payload": {
-         "choice": "deploy",
-         "by":     "alice"
-       }
-     }'
+agentbus reply msg_01HXY_ASK slack-ask <<'EOF'
+{
+  "choice": "deploy",
+  "by": "alice"
+}
+EOF
+# {"ok": true}
 ```
 
 [slack-interactions]: https://api.slack.com/interactivity/handling
@@ -163,29 +165,29 @@ curl -X POST http://127.0.0.1:PORT/v1/instances/slack-ask/replies \
 The orchestrator's blocked `ask` returns:
 
 ```json
-{ "choice": "deploy", "by": "alice" }
+{ "request_id": "msg_01HXY_ASK", "payload": { "choice": "deploy", "by": "alice" } }
 ```
 
 ## 7. Failure modes
 
-- **Bridge crashes mid-flight.** The HTTP connection holding the registration
-  drops, the daemon auto-unregisters `slack-ask`, and any pending asks
-  targeting it are cancelled with `instance_disconnected`. The AI's `ask`
-  returns immediately rather than waiting for the timeout.
-- **Human never clicks.** The daemon times out after `timeout_ms`. The AI sees
-  `{"error": "timeout", "request_id": "msg_01HXY_ASK"}`. The bridge should
-  update the Slack message to a "expired" state when it sees the same envelope
-  pass `timeout_ms` since `ts`.
-- **Late click.** A `reply` arriving after timeout is rejected with
-  `unknown_request_id`. The bridge should log and surface a "too late" note in
-  Slack.
+- **Bridge crashes mid-flight.** The registration row stays (it is persistent).
+  The inbox spool retains any unread envelopes. When the bridge restarts, it
+  calls `check-inbox` and processes whatever accumulated. If `on_delivery` was
+  set, `agentbus sweep` will re-fire the hook for any inbox that has been
+  non-empty for more than the grace period (default 60 s).
+- **Human never clicks.** The asker's `ask` times out after `timeout_ms` (exit
+  2). Use `agentbus ask-result <id>` to retrieve a reply if the human clicks
+  late.
+- **Late click.** A `reply` to an already-timed-out ask is written to the
+  `asks` row and retrievable via `agentbus ask-result`. `unknown_request_id`
+  is returned only if the request_id is entirely unknown (never existed).
 
 ## 8. Production checklist
 
 - Verify Slack request signatures before trusting interaction payloads.
-- Rate-limit unknown `from` instances if the bridge ever exposes posting back
-  into agentbus from Slack slash commands.
-- Persist a short-lived map of `envelope_id -> slack_ts` so the bridge can edit
-  the original message on reply (showing the choice and who made it).
-- Treat the registration connection as load-bearing: monitor it, restart with
-  backoff, and re-subscribe to the inbox on reconnect.
+- Rate-limit if the bridge ever exposes posting back into agentbus from Slack
+  slash commands.
+- Persist a short-lived map of `envelope_id -> slack_ts` so the bridge can
+  edit the original message on reply (showing the choice and who made it).
+- The `agentbus register --persistent` row survives bridge restarts; no
+  re-registration needed unless the instance id changes.

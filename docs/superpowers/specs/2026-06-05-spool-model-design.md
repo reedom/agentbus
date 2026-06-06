@@ -296,3 +296,13 @@ under the harness's monitor facility; lifecycle owned by the harness).
 - The cmux-bellhop spec and plan will be revised after this spec is
   approved; its supervisor state machine and hook scripts carry over
   nearly unchanged.
+
+## Deltas from this spec discovered during implementation
+
+- `asks` table gains `expired_notified INTEGER NOT NULL DEFAULT 0` (not in spec §5.1): lets `sweep` report each expired ask exactly once without re-scanning the whole table.
+- Error model gains `unknown_request_id`: returned by `reply` and `ask-result` when no `asks` row exists for the given request_id (spec §8 table omits it; §6.3 implies it).
+- Re-registering an existing **persistent** row is an idempotent upsert (updates `on_delivery`): single-user trust model makes takeover a non-issue.
+- `await_message` returns an empty list on timeout rather than an error: "nothing arrived" is a normal outcome for the MCP tool.
+- `scripts/inject-inbox.sh` default inbox dir changed from `$XDG_RUNTIME_DIR/agentbus/inbox` to `$HOME/.agentbus/inbox` to match the v0.2 store layout; `AGENTBUS_INBOX_DIR` still overrides.
+- rusqlite pinned at 0.32 (not 0.40): libsqlite3-sys for 0.40 uses the unstable `cfg_select!` macro and exceeds the workspace MSRV of 1.85.
+- Spool writer uses a dev+ino reopen loop (open → flock → verify dev+ino → retry if mismatch): closes the append-vs-consume race where a consumer renames the file between the writer's open and lock (fr:09-hook-inbox).

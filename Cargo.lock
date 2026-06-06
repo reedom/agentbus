@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agentbus-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agentbus-core",
  "anyhow",
@@ -15,7 +15,7 @@ dependencies = [
 
 [[package]]
 name = "agentbus-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "rusqlite",
@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "agentbus-stdio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "agentbus-core",
  "anyhow",

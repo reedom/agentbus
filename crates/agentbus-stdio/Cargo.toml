@@ -14,7 +14,7 @@ name = "agentbus-stdio"
 path = "src/main.rs"
 
 [dependencies]
-agentbus-core = { version = "0.1.0", path = "../agentbus-core" }
+agentbus-core = { version = "0.2.0", path = "../agentbus-core" }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
