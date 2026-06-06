@@ -38,13 +38,18 @@ file format and the consumer contract are unchanged from v0.1.
   retries — this keeps lock-free shell consumers safe.
 - Consumers use the rename-snapshot contract:
   1. Rename `<id>.jsonl` → `<id>.processing.<pid>` (atomic).
-  2. Open the processing file and acquire the same exclusive `flock` once, as
-     a barrier ensuring any in-flight sender append completes before reading.
-  3. Read all lines, process, delete the processing file.
+  2. Read all lines, process, delete the processing file.
+- Consumers never need a lock (the sender's dev+ino reopen loop protects
+  them). The Rust consumer (`check_inbox`) additionally acquires the
+  exclusive `flock` once after the rename, as a barrier ensuring an
+  in-flight sender append completes before reading.
 - The shipped reference hook script (`scripts/inject-inbox.sh`) implements
-  this consumer contract for shell use. It requires `AGENTBUS_INSTANCE` and
-  honours `AGENTBUS_INBOX_DIR` as an override; the default matches the store
-  path above.
+  the lock-free contract for shell use: rename, read, delete — no `flock`
+  (the utility is not portable to stock macOS). It accepts a tiny residual
+  window where a final line still being appended is read torn; agents that
+  cannot tolerate that should consume via `check_inbox`. The script requires
+  `AGENTBUS_INSTANCE` and honours `AGENTBUS_INBOX_DIR` as an override; the
+  default matches the store path above.
 - Senders never delete inbox files. Consumers (the hook script or the Rust
   `check_inbox` / `await_message` calls) are the sole removers.
 - `agentbus sweep --purge-orphans` removes inbox files whose instance id has
@@ -54,8 +59,8 @@ file format and the consumer contract are unchanged from v0.1.
 
 - Non-blocking, file-backed inbound mode complementing `await_message` and
   `check_inbox` (fr:08-mcp-shim, fr:10-cli).
-- Race-free hand-off via atomic rename, with an flock barrier on the consumer
-  side so in-flight appends are not lost.
+- Race-free hand-off via atomic rename; the Rust consumer adds an flock
+  barrier so in-flight appends are never read torn.
 - Dev+ino reopen loop on the sender side keeps lock-free shell consumers safe.
 - One file per instance, named by `instance_id`.
 - A reference hook script operators can adapt to their client's hook system.
