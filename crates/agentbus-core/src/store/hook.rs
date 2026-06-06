@@ -49,7 +49,9 @@ impl Store {
             "envelope_id": envelope_id,
             "detail": outcome.detail,
         });
-        let _ = self.publish_event("bus", payload);
+        if let Err(e) = self.publish_event("bus", payload) {
+            tracing::warn!(error = %e, "could not record bus.delivery_hook_failed event");
+        }
         tracing::warn!(instance, detail = %outcome.detail, "on_delivery hook failed");
     }
 }
@@ -62,6 +64,9 @@ fn run(cmd: &str, envs: &[(&str, String)], timeout: Duration) -> HookOutcome {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // The child inherits the sender's full environment; the AGENTBUS_* vars
+    // are additive. Hooks run as the same user, so this grants nothing the
+    // user lacks (spec section 9).
     for (k, v) in envs {
         command.env(k, v);
     }
@@ -92,10 +97,13 @@ fn wait_with_timeout(child: &mut Child, timeout: Duration) -> HookOutcome {
             }
             Ok(None) => {}
             Err(e) => {
+                // try_wait failed, not the child: it may still be running.
+                let _ = child.kill();
+                let _ = child.wait();
                 return HookOutcome {
                     ok: false,
                     detail: format!("wait: {e}"),
-                }
+                };
             }
         }
         if deadline <= Instant::now() {
