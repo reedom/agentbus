@@ -6,7 +6,7 @@
 
 **Architecture:** A new synchronous `store` module in `agentbus-core` (rusqlite, WAL) absorbs registry/router/eventlog semantics; delivery is the sender appending to the recipient's inbox spool and running its `on_delivery` hook. The MCP shim and CLI call the store in-process. `agentbusd` and the in-memory mailbox/registry/router/eventlog modules are deleted.
 
-**Tech Stack:** Rust 2021 (MSRV 1.85), rusqlite 0.40 (bundled), libc 0.2 (flock + kill), clap 4, serde/serde_json, thiserror, ulid, time. tokio/axum/reqwest are removed.
+**Tech Stack:** Rust 2021 (MSRV 1.85), rusqlite 0.32 (bundled; 0.40 requires cfg_select!, unstable on rustc 1.89, and would break MSRV 1.85), libc 0.2 (flock + kill), clap 4, serde/serde_json, thiserror, ulid, time. tokio/axum/reqwest are removed.
 
 ---
 
@@ -27,6 +27,7 @@ These are implementation choices the spec leaves open. Do not revisit them mid-e
 - Re-registering an existing **persistent** row is an idempotent upsert (updates `on_delivery`). Single-user trust model makes takeover a non-issue.
 - `await_message` returns an empty list on timeout (not an error): "nothing arrived" is a normal outcome for the MCP tool.
 - `scripts/inject-inbox.sh` default inbox dir changes from `$XDG_RUNTIME_DIR/agentbus/inbox` to `$HOME/.agentbus/inbox` (the v0.2 store layout). `AGENTBUS_INBOX_DIR` still overrides.
+- rusqlite is pinned at 0.32, not latest 0.40: libsqlite3-sys for 0.40 uses the unstable cfg_select! macro and its MSRV exceeds the workspace's 1.85. Every API the plan uses exists in 0.32.
 
 ## Execution notes
 
@@ -81,7 +82,7 @@ crates/agentbusd/    DELETED
 In the root `Cargo.toml` `[workspace.dependencies]` section, add:
 
 ```toml
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 libc = "0.2"
 ```
 

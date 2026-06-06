@@ -42,7 +42,9 @@ impl StoreError {
 impl From<rusqlite::Error> for StoreError {
     fn from(e: rusqlite::Error) -> Self {
         if let rusqlite::Error::SqliteFailure(f, _) = &e {
-            if f.code == rusqlite::ErrorCode::DatabaseBusy {
+            if f.code == rusqlite::ErrorCode::DatabaseBusy
+                || f.code == rusqlite::ErrorCode::DatabaseLocked
+            {
                 return StoreError::StoreLocked;
             }
         }
@@ -64,7 +66,21 @@ mod tests {
             StoreError::InstanceIdTaken("x".into()).code(),
             "instance_id_taken"
         );
+        assert_eq!(StoreError::InvalidInstanceId.code(), "invalid_instance_id");
         assert_eq!(StoreError::Timeout("x".into()).code(), "timeout");
+        assert_eq!(
+            StoreError::UnknownRequestId("x".into()).code(),
+            "unknown_request_id"
+        );
         assert_eq!(StoreError::StoreLocked.code(), "store_locked");
+        assert_eq!(
+            StoreError::InvalidEnvelope(crate::envelope::ValidationError::EmptyId).code(),
+            "invalid_envelope"
+        );
+        assert_eq!(StoreError::Io(std::io::Error::other("x")).code(), "io");
+        assert_eq!(
+            StoreError::Sqlite(rusqlite::Error::InvalidQuery).code(),
+            "sqlite"
+        );
     }
 }

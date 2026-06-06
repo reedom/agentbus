@@ -22,6 +22,7 @@ mod tests {
         assert!(pid_alive(std::process::id() as i32));
     }
 
+    // Theoretical PID-reuse race (spec open question 3): acceptable in a unit test.
     #[test]
     fn reaped_child_is_dead() {
         let mut child = std::process::Command::new("true").spawn().unwrap();
