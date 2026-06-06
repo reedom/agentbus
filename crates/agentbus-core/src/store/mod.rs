@@ -9,7 +9,8 @@ mod instances;
 mod liveness;
 mod messages;
 pub(crate) mod paths;
-mod spool;
+pub(crate) mod spool;
+mod sweep;
 
 pub use error::StoreError;
 pub use events::{EventFilter, EventsPage, SeqEnvelope};
@@ -17,6 +18,7 @@ pub use hook::HookOutcome;
 pub use instances::{InstanceRow, RegisterOpts};
 pub use messages::{AskReply, AskStatus, Delivered};
 pub use paths::base_dir;
+pub use sweep::{SweepOpts, SweepReport};
 
 use std::path::{Path, PathBuf};
 

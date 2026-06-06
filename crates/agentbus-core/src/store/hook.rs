@@ -39,6 +39,14 @@ impl Store {
         outcome
     }
 
+    /// Sweep re-fire (spec 6.8): no specific envelope, instance only.
+    pub(crate) fn run_sweep_hook(&mut self, cmd: &str, instance: &str) -> HookOutcome {
+        let envs = [("AGENTBUS_INSTANCE", instance.to_string())];
+        let outcome = run(cmd, &envs, HOOK_TIMEOUT);
+        self.record_failure(instance, None, &outcome);
+        outcome
+    }
+
     fn record_failure(&mut self, instance: &str, envelope_id: Option<&str>, outcome: &HookOutcome) {
         if outcome.ok {
             return;
