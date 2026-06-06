@@ -31,7 +31,6 @@ pub(crate) fn valid_instance_id(id: &str) -> bool {
 }
 
 /// Recipient lookup used by send/ask: row must exist (spec 6.2).
-#[allow(dead_code)] // used from Task 5 onward
 pub(crate) fn on_delivery_of(tx: &Transaction, id: &str) -> Result<Option<String>, StoreError> {
     let row: Option<Option<String>> = tx
         .query_row(

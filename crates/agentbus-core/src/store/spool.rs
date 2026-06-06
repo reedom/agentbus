@@ -39,7 +39,6 @@ fn flock_exclusive(f: &File) -> std::io::Result<()> {
 /// inode we are about to lock; writing there would lose the line. After
 /// acquiring the lock we verify the fd still names the live spool file and
 /// reopen if not. This also keeps lock-free shell consumers (fr:09) safe.
-#[allow(dead_code)] // production use from Task 5 onward (tests use it now)
 pub(crate) fn append(base: &Path, id: &str, env: &Envelope) -> Result<(), StoreError> {
     if !valid_instance_id(id) {
         return Err(StoreError::InvalidInstanceId);
