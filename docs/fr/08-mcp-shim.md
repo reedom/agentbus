@@ -9,7 +9,8 @@ refs:
     - fr:09-hook-inbox
     - fr:10-cli
   modules:
-    - crates/agentbus-stdio/src
+    - crates/agentbus-stdio/src/main.rs
+    - crates/agentbus-stdio/src/tools.rs
 ---
 
 # FR 08: MCP stdio shim over the store
@@ -70,9 +71,11 @@ written before the next line is read.
   The `message` field carries the stable machine-readable code (e.g.
   `unknown_instance`, `instance_id_taken`); `data` carries the human-readable
   detail.
-- On `ask` timeout the error `data` field contains prose including the
-  `request_id`; clients that need the id should call `ask_result` rather than
-  parse the prose.
+- On `ask` timeout the error `message` is `timeout` and the `data` field
+  contains prose including the `request_id`. The shim exposes no `ask_result`
+  tool: an MCP client that needs the late reply must parse the `request_id`
+  out of `data` and retrieve it out-of-band via the CLI
+  (`agentbus ask-result`, fr:10-cli).
 - Unknown method: `{"code": -32601, "message": "method not found"}`.
 - Missing required argument: `{"code": -32602, "message": "missing `<key>`"}`.
 - Malformed JSON input lines are logged to stderr and skipped; the loop

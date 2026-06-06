@@ -8,7 +8,8 @@ refs:
     - fr:05-eventlog
     - fr:09-hook-inbox
   modules:
-    - crates/agentbus-cli/src
+    - crates/agentbus-cli/src/main.rs
+    - crates/agentbus-cli/src/commands.rs
 ---
 
 # FR 10: agentbus CLI

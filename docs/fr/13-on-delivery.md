@@ -43,7 +43,7 @@ The child process inherits the sender's full environment. Four
 |---|---|
 | `AGENTBUS_INSTANCE` | recipient instance id |
 | `AGENTBUS_ENVELOPE_ID` | envelope id of the just-delivered message |
-| `AGENTBUS_KIND` | envelope kind string (`message`, `ask`, `event`, `reply`) |
+| `AGENTBUS_KIND` | envelope kind string: `message` or `ask` (replies and events do not write to inboxes and never fire delivery hooks) |
 | `AGENTBUS_FROM` | sender instance id |
 
 `stdin`, `stdout`, and `stderr` are all redirected to `/dev/null`. The hook
