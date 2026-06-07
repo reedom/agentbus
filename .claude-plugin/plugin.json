@@ -1,7 +1,7 @@
 {
   "name": "agentbus",
   "version": "0.1.0",
-  "description": "MCP-native message bus that lets MCP-capable AI instances coordinate with other AI instances, humans, and external programs. Ships a workflow skill and an install command for the daemon and shim binaries.",
+  "description": "Message bus for AI-agent coordination. Ships a skill that drives the agentbus CLI (daemonless spool store) and an install command; an MCP stdio shim remains available for clients without skills or shell.",
   "author": {
     "name": "reedom",
     "url": "https://github.com/reedom"
