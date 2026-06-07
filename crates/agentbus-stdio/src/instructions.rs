@@ -32,7 +32,8 @@ pub fn text(level: Level) -> Option<&'static str> {
 const MINIMAL: &str = "\
 agentbus message bus. register(instance_id) first; send/ask to talk; \
 check_inbox or await_message to receive (batch; empty = timeout). Answer \
-an inbound ask with reply(request_id = the ask envelope's id; omit `to`). \
+an inbound ask with reply(request_id = the ask envelope's id; reply takes \
+no `to`). \
 Never ask your own id (deadlock).";
 
 const FULL: &str = "\
@@ -48,7 +49,8 @@ await_message (blocking) to receive; both return {\"envelopes\": [...]}. \
 An empty await_message batch means timeout — a normal outcome, not an \
 error.
 3. To answer an inbound ask: reply(from=<you>, request_id=<the ask \
-envelope's id>, payload=...). Do not set `to`; the store routes it.
+envelope's id>, payload=...). reply takes no recipient argument; the \
+store routes it by request_id.
 
 Rules:
 - Never ask your own instance_id: you would block waiting for a reply \

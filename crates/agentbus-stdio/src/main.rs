@@ -1,8 +1,8 @@
 //! MCP stdio shim over the spool store (fr:08, v0.2): no daemon, no socket.
 //! Single-threaded line loop; tool calls run synchronously against ~/.agentbus.
 
-mod tools;
 mod instructions;
+mod tools;
 
 use std::io::{BufRead, Write};
 
@@ -18,6 +18,9 @@ fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    let level = instructions_level();
+    let instructions = instructions::text(level);
 
     let mut store = Store::open()?;
     let mut session = tools::Session::default();
@@ -38,7 +41,7 @@ fn main() -> anyhow::Result<()> {
         let id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let params = req.get("params").cloned().unwrap_or(json!({}));
-        let resp = handle(&mut store, &mut session, method, params);
+        let resp = handle(&mut store, &mut session, instructions, method, params);
         let envelope = match resp {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
             Err(e) => json!({"jsonrpc": "2.0", "id": id, "error": e}),
@@ -58,15 +61,22 @@ fn main() -> anyhow::Result<()> {
 fn handle(
     store: &mut Store,
     session: &mut tools::Session,
+    instructions: Option<&'static str>,
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, serde_json::Value> {
     match method {
-        "initialize" => Ok(json!({
-            "protocolVersion": "2024-11-05",
-            "serverInfo": {"name": "agentbus-stdio", "version": env!("CARGO_PKG_VERSION")},
-            "capabilities": {"tools": {}}
-        })),
+        "initialize" => {
+            let mut result = json!({
+                "protocolVersion": "2024-11-05",
+                "serverInfo": {"name": "agentbus-stdio", "version": env!("CARGO_PKG_VERSION")},
+                "capabilities": {"tools": {}}
+            });
+            if let Some(text) = instructions {
+                result["instructions"] = json!(text);
+            }
+            Ok(result)
+        }
         "tools/list" => {
             let tools: Vec<_> = tools::specs()
                 .into_iter()
@@ -99,4 +109,30 @@ fn handle(
         }
         _ => Err(json!({"code": -32601, "message": "method not found"})),
     }
+}
+
+/// Parse `--instructions=<v>` / `--instructions <v>` (none|minimal|full).
+/// Default: full. Unknown values are a startup error; unknown flags are
+/// ignored so future MCP-host-injected args do not kill the shim.
+fn instructions_level() -> instructions::Level {
+    let mut level = instructions::Level::Full;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        let value = match arg.strip_prefix("--instructions=") {
+            Some(v) => Some(v.to_string()),
+            None if arg == "--instructions" => args.next(),
+            None => None,
+        };
+        let Some(value) = value else { continue };
+        match instructions::Level::parse(&value) {
+            Some(l) => level = l,
+            None => {
+                eprintln!(
+                    "error: invalid --instructions value `{value}` (expected none|minimal|full)"
+                );
+                std::process::exit(2);
+            }
+        }
+    }
+    level
 }

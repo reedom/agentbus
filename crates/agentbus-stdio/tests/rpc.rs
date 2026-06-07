@@ -11,8 +11,13 @@ struct Shim {
 
 impl Shim {
     fn spawn(dir: &std::path::Path) -> Shim {
+        Shim::spawn_args(dir, &[])
+    }
+
+    fn spawn_args(dir: &std::path::Path, args: &[&str]) -> Shim {
         let mut child = Command::new(env!("CARGO_BIN_EXE_agentbus-stdio"))
             .env("AGENTBUS_DIR", dir)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -116,4 +121,26 @@ fn send_to_unknown_instance_returns_coded_error() {
                    "arguments": {"from": "a", "to": "ghost", "payload": {}}}
     }));
     assert_eq!(resp["error"]["message"], "unknown_instance");
+}
+
+#[test]
+fn initialize_includes_instructions_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut shim = Shim::spawn(tmp.path());
+    let init = shim.call(serde_json::json!({
+        "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}
+    }));
+    let text = init["result"]["instructions"].as_str().unwrap();
+    assert!(text.contains("ask envelope's id"), "got: {text}");
+}
+
+#[test]
+fn instructions_none_omits_the_field() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut shim = Shim::spawn_args(tmp.path(), &["--instructions=none"]);
+    let init = shim.call(serde_json::json!({
+        "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}
+    }));
+    assert!(init["result"]["instructions"].is_null());
+    assert_eq!(init["result"]["serverInfo"]["name"], "agentbus-stdio");
 }
