@@ -56,6 +56,7 @@ CLI, not a resident) handles crash-recovery edges.
 | Storage | SQLite (WAL) for registry/asks/events + JSONL inbox files for delivery | hook scripts keep the fr:09 rename-consume contract with shell + jq only |
 | Ask wait | Polling, 50 ms start, 250 ms cap backoff | 10 lines, imperceptible against LLM turn latency; kqueue can replace it later without protocol change |
 | Liveness | `pid` recorded at registration; readers verify with `kill(pid, 0)`; `persistent` rows exempt | same-machine assumption makes pid checks honest; no heartbeats, no TTL clocks |
+| MCP shim | Keep alongside the CLI (not folded into it) | both are thin wrappers over `store`, but the shim is the session's liveness anchor: its long-lived pid backs non-persistent registrations and its stdin EOF triggers cleanup. A CLI `register` records the invocation's pid, which exits immediately -- the row is instantly dead and the id stealable, so CLI-only session registration would force `--persistent` and lose auto-cleanup. Dropping the shim would require redesigning fr:02 liveness (e.g. TTL leases), not just the tool surface. Split: shim for sessions (pid-scoped identity), CLI for scripts and hooks (one-shots, persistent rows, `watch`/`sweep`) |
 
 ## 5. Storage layout
 
