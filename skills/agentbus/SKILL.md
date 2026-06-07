@@ -143,7 +143,7 @@ agentbus events --follow --since 42     # consumers replay/follow
 - **Delivery is durable.** Spools are unbounded append-only files;
   nothing is dropped and mail survives reboots.
 - **No daemon exists.** If `agentbus` is missing, install it
-  (`cargo install agentbus-cli@^0.2`); do not look for a server process.
+  (`cargo install agentbus-cli@^0.3`); do not look for a server process.
 
 ## Errors (CLI stderr: `error[<code>]: <detail with recovery hint>`)
 

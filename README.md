@@ -28,8 +28,8 @@ All surfaces speak the same envelope format.
 ## Install
 
 ```bash
-cargo install agentbus-cli@^0.2          # the CLI: all most setups need
-cargo install agentbus-stdio@^0.2        # optional MCP shim (fallback clients)
+cargo install agentbus-cli@^0.3          # the CLI: all most setups need
+cargo install agentbus-stdio@^0.3        # optional MCP shim (fallback clients)
 ```
 
 No daemon to start. Register an instance and send:

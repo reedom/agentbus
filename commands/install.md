@@ -22,14 +22,14 @@ cannot use skills or shell).
 ## Steps
 
 1. Check what is already present:
-   - `agentbus --version` — if it prints a `0.2.x` version, the CLI is
+   - `agentbus --version` — if it prints a `0.3.x` version, the CLI is
      installed.
    - With `--with-shim`: also check `agentbus-stdio` resolves on PATH
      (`command -v agentbus-stdio`).
 2. Install what is missing:
-   - `cargo install agentbus-cli@^0.2` (add `--root <prefix>` when the
+   - `cargo install agentbus-cli@^0.3` (add `--root <prefix>` when the
      user passed `--prefix`).
-   - With `--with-shim`: `cargo install agentbus-stdio@^0.2`.
+   - With `--with-shim`: `cargo install agentbus-stdio@^0.3`.
 3. Verify: `agentbus ls` against a temp store must succeed:
    `AGENTBUS_DIR=$(mktemp -d) agentbus ls`.
 4. Report what was installed and where. If `--with-shim` was used, print

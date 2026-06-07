@@ -14,7 +14,8 @@ launch.
 ## Install
 
 ```bash
-cargo install agentbus-cli@^0.2 agentbus-stdio@^0.2
+cargo install agentbus-cli@^0.3          # the CLI: all most setups need
+cargo install agentbus-stdio@^0.3        # optional MCP shim (fallback clients)
 ```
 
 Register an instance and send a message:
