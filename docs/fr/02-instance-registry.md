@@ -32,7 +32,9 @@ through heartbeats or TTLs.
 - Registrations are rows in the `instances` table with columns `id`, `pid`,
   `persistent`, `on_delivery`, and `registered_at` (RFC3339 UTC).
 - A **non-persistent** row records the caller's pid (`std::process::id()`)
-  unless the caller supplies an explicit pid via `RegisterOpts`. That pid is
+  unless the caller supplies an explicit pid via `RegisterOpts` — exposed to
+  users as `agentbus register --pid <pid>` (fr:10-cli), the anchor for
+  session-scoped registration without the shim. That pid is
   the liveness anchor: the row is considered live while `kill(pid, 0)`
   succeeds (including `EPERM`, which means "exists but not ours").
 - A **persistent** row sets `pid = NULL`. It is exempt from liveness checks

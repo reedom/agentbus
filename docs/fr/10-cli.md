@@ -30,7 +30,7 @@ stdin; `--from` defaults to `ext:cli`.
 
 | Verb | Key flags | Semantics |
 |---|---|---|
-| `register` | `--persistent`, `--on-delivery` | Register an instance id; non-persistent rows are anchored to the CLI pid, which exits immediately — use `--persistent` for durable addresses |
+| `register` | `--persistent`, `--on-delivery`, `--pid` | Register an instance id; `--pid <pid>` anchors the non-persistent row to a long-lived process (e.g. an AI harness) for session-scoped identity; `--persistent` for durable addresses; `--pid` and `--persistent` conflict |
 | `unregister` | | Remove a registration; inbox file is kept |
 | `ls` | | List instances with liveness |
 | `send` | `--from`, `--file` | One-way message; prints `{"id": "..."}` |
@@ -68,11 +68,11 @@ stdin; `--from` defaults to `ext:cli`.
 
 ## Boundaries
 
-- Non-persistent `register` from the CLI records the CLI process's pid, which
-  exits immediately after printing `{"ok": true}` — the row is instantly a
-  dead non-persistent entry. Meaningful only with `--persistent`; long-lived
-  processes should register through the shim (fr:08-mcp-shim) or embed the
-  store directly.
+- A bare non-persistent `register` records the CLI process's pid, which
+  exits immediately — the row is instantly dead. Session-scoped identity
+  uses `--pid <session-pid>` (the primary AI path, taught by the agentbus
+  skill); durable addresses use `--persistent`. The shim (fr:08-mcp-shim)
+  remains an alternative anchor for MCP-only clients.
 - The CLI adds no logic of its own beyond argument parsing and output
   formatting; all semantics live in the store.
 - It does not expose MCP tools; that surface is the shim (fr:08-mcp-shim).
@@ -96,5 +96,5 @@ stdin; `--from` defaults to `ext:cli`.
 - Output shapes change (pretty vs compact, field names).
 - Exit code assignments change.
 - The `--dir` / `AGENTBUS_DIR` default changes.
-- Non-persistent register pid-exit behavior is addressed (e.g. a warning is
-  added).
+- The `--pid` anchoring contract changes (e.g. pid validation or a
+  `--pid auto` mode is added).

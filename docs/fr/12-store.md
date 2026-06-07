@@ -162,6 +162,13 @@ unreliable on network or cloud-synced filesystems (Dropbox, iCloud).
 `StoreLocked` is mapped from both `DatabaseBusy` and `DatabaseLocked` rusqlite
 errors, so it covers both `SQLITE_BUSY` and `SQLITE_LOCKED`.
 
+Display strings — the `data` field on the MCP wire and the detail after
+`error[<code>]:` on CLI stderr — carry recovery hints (e.g.
+`unknown_request_id` explains that the request_id must be the ask
+envelope's id). The stable `code()` strings never change; only the hint
+prose may evolve. Hints exist so that clients receiving no other guidance
+channel (fr:16-usage-guidance) self-correct at failure time.
+
 ## Traceability
 
 - Related FR: fr:01-envelope, fr:02-instance-registry, fr:09-hook-inbox
@@ -176,3 +183,4 @@ errors, so it covers both `SQLITE_BUSY` and `SQLITE_LOCKED`.
 - The `$AGENTBUS_DIR` / `$HOME` fallback logic changes.
 - Permissions policy changes (0700 tightening logic).
 - rusqlite is upgraded and the pinning rationale changes.
+- A recovery hint is added to or removed from an error Display string.

@@ -8,6 +8,7 @@ refs:
     - fr:04-router
     - fr:09-hook-inbox
     - fr:10-cli
+    - fr:16-usage-guidance
   modules:
     - crates/agentbus-stdio/src/main.rs
     - crates/agentbus-stdio/src/tools.rs
@@ -19,7 +20,10 @@ refs:
 
 ## Purpose
 
-Each AI session launches its own `agentbus-stdio` process. In v0.2 the shim
+The shim is the fallback AI surface: for MCP-capable clients that cannot
+load skills or run shell commands (fr:16-usage-guidance). Skill-capable
+clients drive the CLI instead and do not load the shim. A client that does
+load it launches its own `agentbus-stdio` process. In v0.2 the shim
 is not a proxy: it opens `~/.agentbus/bus.db` and the inbox spool directory
 directly, performing all store operations in-process. There is no daemon or
 Unix socket. The shim is thin enough that its entire state is one open store
@@ -49,6 +53,13 @@ v0.2 surface changes from v0.1:
   (`{"envelopes": [...]}`) rather than a single envelope. `await_message`
   returns an empty list on timeout.
 - There is no socket reconnect logic — the shim owns the store connection.
+
+The `initialize` result carries an `instructions` string with condensed
+usage guidance (`src/instructions.rs`), controlled by the
+`--instructions=none|minimal|full` startup flag (default `full`).
+Packagings that ship the skill pass `none` to avoid paying the duplicate
+context cost. Unknown flag values are a startup error (exit 2); unknown
+flags are ignored.
 
 The shim runs a single-threaded synchronous line loop: one JSON-RPC request at
 a time; no async I/O. Each tool call executes synchronously and the response is
@@ -92,7 +103,8 @@ written before the next line is read.
 
 ## Traceability
 
-- Related FR: fr:01-envelope, fr:04-router, fr:09-hook-inbox, fr:10-cli
+- Related FR: fr:01-envelope, fr:04-router, fr:09-hook-inbox, fr:10-cli,
+  fr:16-usage-guidance
 
 ## When to update
 
@@ -101,3 +113,5 @@ written before the next line is read.
 - Session cleanup behavior (EOF handling) changes.
 - The shim gains async I/O or multi-threading.
 - The error code format changes.
+- The `instructions` text, its levels, or the flag default changes.
+- The shim's role as fallback (vs primary) surface changes.
