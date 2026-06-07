@@ -1,26 +1,27 @@
 ---
 name: agentbus
-description: Use when you need to coordinate with another AI session, agent, human, or external process via the agentbus message bus — sending messages, asking questions and waiting for answers, broadcasting events, draining an inbox, or registering this session under a stable instance_id. Trigger on phrases like "send to another claude", "ask the orchestrator", "coordinate with bob", "broadcast event", "agentbus", "MCP message bus", "register me as", "check my inbox", "talk to another session".
+description: Use when you need to coordinate with another AI session, agent, human, or external process via the agentbus message bus — sending messages, asking questions and waiting for answers, broadcasting events, draining an inbox, or registering this session under a stable instance_id. Trigger on phrases like "send to another claude", "ask the orchestrator", "coordinate with bob", "broadcast event", "agentbus", "message bus", "register me as", "check my inbox", "talk to another session".
 ---
 
 # agentbus
 
-agentbus is an MCP-native message bus. Tools are exposed as `mcp__agentbus__*`.
-This skill teaches you how to USE them well; the tool descriptions tell you
-WHAT each one does.
+agentbus is a daemonless message bus driven by the `agentbus` CLI. This
+skill teaches you how to USE it well; `agentbus <verb> --help` tells you
+WHAT each flag does.
 
 ## Mental model
 
 There is **no daemon**. The bus is a shared local store (`~/.agentbus/`:
-a SQLite database plus per-instance JSONL inbox spool files). Every tool
-call operates on the store directly, in-process. Think Maildir or git.
+a SQLite database plus per-instance JSONL inbox spool files). Every CLI
+invocation operates on the store directly, in-process. Think Maildir or
+git.
 
-- **Instance**: a participant with a stable id (a session, an agent, a script).
-  A registration is a database row. Non-persistent rows are tied to the shim
-  process's pid and vanish when the session ends; `persistent` rows survive
-  reboots.
-- **Envelope**: every wire message — has `id`, `kind`, `from`, optional `to`,
-  optional `request_id`, `ts`, and a structured `payload` (JSON, not string).
+- **Instance**: a participant with a stable id (a session, an agent, a
+  script). A registration is a database row. Non-persistent rows are
+  anchored to a pid and vanish when that process dies; `--persistent`
+  rows survive reboots.
+- **Envelope**: every wire message — has `id`, `kind`, `from`, optional
+  `to`, optional `request_id`, `ts`, and a structured `payload` (JSON).
 - **Kinds**:
   - `message` — fire-and-forget, one recipient, spooled to their inbox.
   - `ask` — request that blocks the sender until a `reply` or timeout.
@@ -31,159 +32,142 @@ call operates on the store directly, in-process. Think Maildir or git.
 
 ## Quickstart
 
-```text
-1. mcp__agentbus__register(instance_id="<your-id>")        # do this first
-2. either:
-     mcp__agentbus__send(from=..., to=..., payload=...)
-   or:
-     mcp__agentbus__ask(from=..., to=..., payload=..., timeout_ms=...)
-   or:
-     mcp__agentbus__publish_event(from=..., payload=...)
-3. drain incoming (both return {"envelopes": [...]} batches):
-     mcp__agentbus__check_inbox(instance_id=...)           # non-blocking
-     mcp__agentbus__await_message(instance_id=..., timeout_ms=...) # blocking
-4. on inbound ask:
-     mcp__agentbus__reply(from=<you>, request_id=<asker_msg_id>, payload=...)
+```bash
+# 1. register yourself first (see "Registering this session" below)
+agentbus register "$MY_ID" --pid "$PPID"
+
+# 2. talk
+echo '{"hello":"world"}' | agentbus send bob --from "$MY_ID"
+echo '{"q":"ready?"}'    | agentbus ask bob --from "$MY_ID" --timeout-ms 60000
+echo '{"deploy":"done"}' | agentbus publish --from "$MY_ID"
+
+# 3. drain incoming (both print {"envelopes": [...]} batches)
+agentbus check-inbox "$MY_ID"                  # non-blocking
+agentbus await "$MY_ID" --timeout-ms 60000     # blocking
+
+# 4. on an inbound ask (kind="ask"), answer by its envelope id
+echo '{"a":"yes"}' | agentbus reply <ask-envelope-id> "$MY_ID"
 ```
 
-## Picking the right tool
+## Registering this session
 
-| Need | Use | Notes |
+Non-persistent rows need a pid anchor that lives as long as your session.
+A bare `agentbus register` records the CLI's own pid, which exits
+immediately — the row would be instantly dead. Pick one:
+
+- `--pid <session-pid>`: anchor to the harness process. From a shell you
+  spawn, `$PPID` usually is the harness pid; verify once with
+  `ps -o comm= -p $PPID` if unsure. Cleanup is automatic: when the
+  harness dies, the row is reclaimed lazily (next `register`) or by
+  `agentbus sweep`.
+- `--persistent`: a durable address that survives reboots; release it
+  with `agentbus unregister <id>` when the role ends.
+
+Only **recipients** need registration. Any `--from` string is accepted
+for sending; register only ids that must receive.
+
+Naming: stable + descriptive (`code-reviewer-pr123`,
+`orchestrator-deploy`), charset `[A-Za-z0-9_.:-]{1,128}`.
+
+## Picking the right verb
+
+| Need | Verb | Notes |
 |---|---|---|
-| Tell another instance something, don't wait | `send` | one recipient; recipient must be registered |
-| Ask a question and need an answer | `ask` | blocks; set realistic `timeout_ms` (default 30s) |
-| Answer someone else's `ask` | `reply` | `request_id` = the ask envelope's `id` |
-| Broadcast to many observers | `publish_event` | no `to`; readers tail the event log |
-| Pull pending messages once | `check_inbox` | non-blocking, drains all, returns batch |
-| Wait for messages | `await_message` | blocks up to `timeout_ms`; empty list on timeout |
-| List who is registered | `list_instances` | each row carries an `alive` flag (pid liveness) |
-| Bind this session to an id | `register` | optional `persistent`, `on_delivery` |
-| Release the id early | `unregister` | non-persistent ids auto-release at session end |
+| Tell another instance something, don't wait | `send` | recipient must be registered |
+| Ask a question and need the answer | `ask` | blocks; exit 2 on timeout |
+| Answer someone else's ask | `reply` | first arg = the ask envelope's `id` |
+| Broadcast to observers | `publish` | no recipient; readers tail the log |
+| Pull pending messages once | `check-inbox` | non-blocking, drains all |
+| Wait for messages | `await` | blocks up to `--timeout-ms`; empty list on timeout |
+| Who is registered? | `ls` | rows carry an `alive` flag |
+| Follow the event log | `events --follow` | `--since <seq>` to resume |
+| Crash cleanup | `sweep` | prunes dead rows, reports expired asks |
 
-## Naming instance ids
+## Blocking calls under a harness
 
-- Stable + descriptive: `code-reviewer-pr123`, `orchestrator-deploy-2026-05-22`.
-- Allowed chars: `[A-Za-z0-9_.:-]{1,128}`.
-- Only **recipients** need registration. Any `from` string is accepted for
-  sending; register only the ids that must receive messages.
+`ask` and `await` block the shell. Keep `--timeout-ms` comfortably below
+your harness's shell-command timeout (e.g. with a 2-minute limit, use
+`--timeout-ms 100000`) and loop if you need to wait longer. An `ask`
+timeout exits 2 and does NOT discard the request — stderr names the
+request_id; fetch a late answer with `agentbus ask-result <request_id>`.
 
 ## Patterns
 
-### Ask/reply roundtrip (you are the asker)
-
-```text
-ask(from="you", to="bob", payload={"q":"..."}, timeout_ms=30000)
-# blocks until bob replies or 30s elapses
-# returns {"request_id": ..., "payload": <bob's answer>}
-```
-
 ### Ask/reply roundtrip (you are the answerer)
 
-```text
-await_message(instance_id="you", timeout_ms=60000)
-# returns {"envelopes": [...]}; find the one with kind="ask"
-# extract envelope.id as the request_id
-reply(from="you", request_id=<that id>, payload=<your answer>)
-# `to` is auto-filled from the asks row — do not set it
+```bash
+agentbus await "$MY_ID" --timeout-ms 60000
+# in the printed envelopes, find kind=="ask"; its "id" is the request id
+echo '{"answer":42}' | agentbus reply msg_01HXY... "$MY_ID"
 ```
 
-### Retrieving a late reply after an ask timeout
+### Wake a recipient on delivery (no polling)
 
-An `ask` timeout does NOT discard the request: the asks row stays, and a
-late `reply` still lands in it. The timeout error's `data` field contains
-the `request_id`; retrieve the answer out-of-band with the CLI:
-
-```text
-agentbus ask-result <request_id>
+```bash
+agentbus register worker-1 --pid "$PPID" \
+  --on-delivery "bellhop dispatch worker-1"
 ```
 
-### Wake a recipient on delivery (no daemon, no polling)
-
-Register with an `on_delivery` command; every sender executes it (15s
-timeout) after spooling a message to you:
-
-```text
-register(instance_id="worker-1", on_delivery="bellhop dispatch worker-1")
-```
-
-Hook failures are non-fatal — the envelope is already durably spooled.
-
-### Stateless session catch-up (hook-injected inbox)
-
-If your session may restart between messages, configure the SessionStart
-hook to inject `~/.agentbus/inbox/<your-id>.jsonl` into your prompt
-context. You do NOT need to call `await_message` in that mode — the
-harness delivers the queue at boot.
-
-### Live notification stream (interactive harness)
-
-`agentbus watch <instance_id>` (CLI, not an MCP tool) tails the event log
-and prints one line per envelope addressed to you. It never consumes the
-inbox — react by calling `check_inbox`. See
-`docs/reference/watch-integration.md` for running it under a session
-monitor.
+Every sender executes the command (15 s cap) after spooling to you. Hook
+failures are non-fatal — the envelope is already durably spooled.
+Security: the command runs as your OS user in the sender's process;
+register only commands you trust.
 
 ### Fanout broadcast
 
-```text
-publish_event(from="you", payload={"kind":"deploy.started","sha":"abc"})
+```bash
+echo '{"kind":"deploy.started","sha":"abc"}' | agentbus publish --from "$MY_ID"
+agentbus events --follow --since 42     # consumers replay/follow
 ```
 
-Events append to the ordered log; consumers replay/follow with
-`agentbus events --follow [--since <seq>]`.
+### Harness-dependent extras (skip if yours lacks the facility)
+
+- **Hook-injected inbox** (e.g. Claude Code SessionStart hook): inject
+  `~/.agentbus/inbox/<your-id>.jsonl` into prompt context at boot; then
+  you do not call `await` at all. See `scripts/inject-inbox.sh`.
+- **Live monitor** (e.g. Claude Code Monitor): run
+  `agentbus watch <id>` under the monitor; it prints one line per
+  envelope addressed to you and never consumes the inbox — react with
+  `check-inbox`. See `docs/reference/watch-integration.md`.
 
 ## Gotchas
 
-- **Self-ask deadlocks**. Do not `ask` your own instance_id; the answer would
-  have to come from you, but you are blocked waiting for it.
-- **payload is structured JSON**. Pass an object/array/number, not a JSON
-  string. The shim auto-parses string payloads as a safety net but native
-  values are clearer.
-- **reply does not need `to`**. The store looks up the original asker from
-  the asks row.
-- **await_message returns a batch**. `{"envelopes": [...]}` — possibly
-  several, possibly empty (empty = timeout, which is a normal outcome, not
-  an error).
-- **Delivery is durable**. Inbox spools are unbounded, append-only files;
-  nothing is dropped on overflow and messages survive reboots. Undelivered
-  mail waits until the recipient consumes it.
-- **Registrations have two lifetimes**. Non-persistent (default): tied to
-  this session's shim process, auto-released at session end, reclaimed by
-  pid-liveness if the session dies abruptly. `persistent: true`: survives
-  until explicit `unregister` (or `agentbus sweep --purge-orphans`).
-- **There is no daemon to start**. If the `mcp__agentbus__*` tools are
-  missing, the `agentbus-stdio` binary is not on PATH or the MCP server
-  entry is stale — fix the config, do not look for a daemon process.
+- **Self-ask deadlocks.** Never `ask` your own instance id; the answer
+  would have to come from you, but you are blocked waiting for it.
+- **`reply` takes the ask envelope's `id`** as its request_id argument —
+  not a message id; plain `message` envelopes take no reply.
+- **Batches.** `check-inbox`/`await` print `{"envelopes": [...]}` —
+  possibly several, possibly empty (empty = timeout, a normal outcome).
+- **Payload is structured JSON** read from stdin or `--file`; pass an
+  object/array, not double-encoded text.
+- **Delivery is durable.** Spools are unbounded append-only files;
+  nothing is dropped and mail survives reboots.
+- **No daemon exists.** If `agentbus` is missing, install it
+  (`cargo install agentbus-cli@^0.3`); do not look for a server process.
 
-## Error codes (RPC)
-
-Tool errors arrive as `{"code": -32000, "message": "<stable code>",
-"data": "<human detail>"}`. The stable codes:
+## Errors (CLI stderr: `error[<code>]: <detail with recovery hint>`)
 
 | Code | Meaning | Recover by |
 |---|---|---|
-| `unknown_instance` | recipient not registered | check `list_instances`; register the target first |
-| `instance_id_taken` | a live process owns that id | pick a different id (dead owners are auto-replaced) |
+| `unknown_instance` | recipient not registered | `agentbus ls`; register the target first |
+| `instance_id_taken` | a live process owns that id | pick a different id (dead owners auto-replaced) |
 | `invalid_instance_id` | bad id syntax | use `[A-Za-z0-9_.:-]{1,128}` |
-| `timeout` | ask expired unanswered | `data` has the request_id; `agentbus ask-result` later |
-| `unknown_request_id` | no such ask | request_id typo, or replying to a plain `message` |
-| `store_locked` | pathological write contention | retry after a short wait |
-| `invalid_envelope` | envelope validation failed | fix arg shape (see protocol doc) |
-
-`-32602` = missing required argument; `-32601` = unknown tool.
+| `timeout` (exit 2) | ask expired unanswered | `agentbus ask-result <request_id>` later |
+| `unknown_request_id` | no such ask | you replied with a message id, or to a plain `message` |
+| `store_locked` | write contention | retry after a short wait |
 
 ## When NOT to use agentbus
 
 - Within a single process — use normal function calls.
-- Cross-machine — the store is a local directory (`0700`), single machine,
-  single user.
+- Cross-machine — the store is a local directory (`0700`), one machine,
+  one user.
 - Job queues needing acks/retries/leases — delivery is durable but
-  consume-once; there is no redelivery protocol.
+  consume-once.
 - Auth-required surfaces — trust boundary is filesystem ownership only.
 
-## See also
+## MCP fallback
 
-- `docs/reference/protocol.md` — envelope schema + store operations + tool tables.
-- `docs/reference/watch-integration.md` — live notification under a harness monitor.
-- `docs/reference/extbot-integration.md` — external orchestrator pattern.
-- `docs/reference/slack-bridge.md` — human-in-the-loop via Slack.
+Clients that cannot run shell commands can load the `agentbus-stdio` MCP
+server instead; it exposes the same operations as nine tools and teaches
+itself via initialize `instructions`. If this skill is present, prefer
+the CLI and do not install the shim.

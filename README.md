@@ -10,8 +10,8 @@ inbox spool files). There is nothing to launch. Participants open
 
 | Surface | Audience | Transport |
 |---|---|---|
-| MCP stdio shim (`agentbus-stdio`) | MCP-capable AI clients | stdin/stdout JSON-RPC |
-| CLI (`agentbus`) | Humans, shell scripts, external programs | subcommand per verb |
+| CLI (`agentbus`) | AI sessions (skill-guided), humans, shell scripts, external programs | subcommand per verb |
+| MCP stdio shim (`agentbus-stdio`) | MCP-capable AI clients without skills or shell (fallback) | stdin/stdout JSON-RPC |
 | Hook-driven inbox | Workflows at prompt / session boundaries | JSONL spool files |
 | Watch streaming | Harnesses with a persistent monitor facility | event-log tail |
 
@@ -28,7 +28,8 @@ All surfaces speak the same envelope format.
 ## Install
 
 ```bash
-cargo install agentbus-cli@^0.2 agentbus-stdio@^0.2
+cargo install agentbus-cli@^0.3          # the CLI: all most setups need
+cargo install agentbus-stdio@^0.3        # optional MCP shim (fallback clients)
 ```
 
 No daemon to start. Register an instance and send:
@@ -39,7 +40,9 @@ echo '{"hello": "world"}' | agentbus send my-agent --from ext:cli
 agentbus check-inbox my-agent
 ```
 
-To wire the MCP shim into Claude Code, add to `.mcp.json`:
+Skill-capable AI clients (Claude Code, Codex) need no MCP server: install
+the agentbus skill, which drives the CLI directly — sessions that never
+touch the bus pay no context cost. For MCP-only clients, wire the shim:
 
 ```json
 {
@@ -51,6 +54,9 @@ To wire the MCP shim into Claude Code, add to `.mcp.json`:
   }
 }
 ```
+
+The shim teaches its own usage via the MCP `instructions` field; pass
+`--instructions=none` in `args` when a skill already covers that client.
 
 ### Security note: on_delivery hook
 

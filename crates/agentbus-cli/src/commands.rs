@@ -29,14 +29,18 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Cmd {
-    /// Register an instance id (non-persistent rows die with this process;
-    /// pair with --persistent for durable addresses).
+    /// Register an instance id (non-persistent rows die with the anchor pid;
+    /// default anchor is this process — pass --pid to anchor to a long-lived
+    /// session process, or --persistent for durable addresses).
     Register {
         id: String,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "pid")]
         persistent: bool,
         #[arg(long)]
         on_delivery: Option<String>,
+        /// Owner pid for the non-persistent row (e.g. the AI harness process).
+        #[arg(long)]
+        pid: Option<i32>,
     },
     /// Remove a registration (the inbox file is kept).
     Unregister { id: String },
@@ -124,13 +128,14 @@ pub fn run(cli: Cli) -> Result<()> {
             id,
             persistent,
             on_delivery,
+            pid,
         } => {
             store.register(
                 &id,
                 &RegisterOpts {
                     persistent,
                     on_delivery,
-                    pid: None,
+                    pid,
                 },
             )?;
             println!("{}", serde_json::json!({"ok": true}));

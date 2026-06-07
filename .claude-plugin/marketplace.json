@@ -13,7 +13,7 @@
       "name": "agentbus",
       "source": ".",
       "version": "0.1.0",
-      "description": "MCP message bus for AI-to-AI / AI-to-human / AI-to-process coordination. Provides nine MCP tools (register, send, ask, reply, await_message, check_inbox, list_instances, publish_event, unregister) plus a skill that teaches their workflow.",
+      "description": "Message bus for AI-to-AI / AI-to-human / AI-to-process coordination. Ships a skill that drives the agentbus CLI over a daemonless local store; an optional MCP stdio shim covers clients without skills or shell.",
       "category": "communication",
       "tags": [
         "mcp",
