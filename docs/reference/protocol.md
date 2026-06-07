@@ -2,22 +2,28 @@
 refs:
   id: ref:protocol
   kind: reference
-  title: "Wire protocol, REST endpoints, and MCP tool surface"
+  title: "Wire protocol and operation surface"
+  related:
+    - fr:01-envelope
+    - fr:04-router
+    - fr:08-mcp-shim
+    - fr:10-cli
+    - fr:12-store
 ---
 
 # Protocol reference
 
-This document describes the wire format used by every agentbus surface, the REST
-endpoints exposed by the daemon, and the MCP tools exposed by the stdio shim.
+agentbus v0.2 is a daemonless message bus over shared local storage (SQLite +
+inbox spool files). There is nothing to launch: participants open
+`~/.agentbus/bus.db` directly.
 
-It is the protocol companion to the functional requirements under
-[`../fr/`](../fr/index.md) — see `fr:01-envelope`, `fr:06-rest-api`, and
-`fr:08-mcp-shim` for the design of record; this doc adds example payloads for
-each surface.
+This document covers the envelope wire format, the full store operation
+surface, the nine MCP tools, CLI invocation examples, and the delivery mode
+summary. The design of record for each area is in [`../fr/`](../fr/index.md).
 
 ## 1. The envelope
 
-Every message on every surface is an envelope:
+Every message on every surface is an envelope. See [fr:01-envelope](../fr/01-envelope.md) for the complete field table and kind semantics.
 
 ```json
 {
@@ -32,224 +38,270 @@ Every message on every surface is an envelope:
 }
 ```
 
-### 1.1 Fields
-
 | Field | Required for | Notes |
 |---|---|---|
-| `id` | all | ULID, server-assigned at ingress |
+| `id` | all | ULID, stamped by the sending process |
 | `kind` | all | `message`, `ask`, `reply`, `event` |
-| `from` | all | `instance_id` of sender, or `ext:<label>` for unregistered external talkers |
+| `from` | all | sender `instance_id`, or `ext:<label>` for unregistered callers |
 | `to` | `message`, `ask`, `reply` | absent / null for broadcast `event` |
-| `request_id` | `reply` (required), optional on `ask` | correlates a reply with its `ask` |
-| `timeout_ms` | `ask` | clamped to `[1000, 86_400_000]` |
-| `ts` | all | RFC3339 UTC, server-assigned at ingress |
-| `payload` | all | opaque JSON; bus does not interpret |
+| `request_id` | `reply` (required), optional on `ask` | correlates a reply to its ask |
+| `timeout_ms` | `ask` | honored verbatim, no clamping (CLI and shim default to 30 000) |
+| `ts` | all | RFC3339 UTC, stamped by the sending process |
+| `payload` | all | opaque JSON; the bus never interprets it |
 
-`id` and `ts` are always overwritten by the daemon at ingress to prevent forgery
-and ensure ordering. Callers may omit them.
+`id` and `ts` are always stamped by the sender; caller-supplied values are
+ignored.
 
-### 1.2 Kind semantics
+### 1.1 Kind semantics
 
-- **message** — one-way notification to `to`. No response expected.
-- **ask** — RPC request to `to`. Caller blocks until a `reply` with matching
-  `request_id` arrives or `timeout_ms` elapses.
-- **reply** — response to an earlier `ask`. `request_id` matches the ask's `id`.
-  `from` matches the original `to`; `to` matches the original `from`.
-- **event** — broadcast notification with no specific recipient. Goes only to
-  SSE subscribers (and the JSONL log).
+- **message** — one-way notification to `to`; no response expected.
+- **ask** — RPC request; the caller blocks until a matching `reply` arrives or `timeout_ms` elapses.
+- **reply** — answer to an ask; `request_id` matches the ask's `id`, `from`/`to` reversed.
+- **event** — broadcast with no recipient; reaches the event log and `watch` streams.
 
-### 1.3 Identity and addressing
+### 1.2 Identity and addressing
 
-- Instances are addressed by client-provided `instance_id`. Format:
-  `[A-Za-z0-9_.:-]{1,128}`.
-- Registration is exclusive: collisions are rejected.
-- External programs that talk without registering use `from: "ext:<label>"`.
-  They cannot be addressed by others (no inbox) but can `send`, `ask`, and
-  subscribe to events.
+- `instance_id` format: `[A-Za-z0-9_.:-]{1,128}`.
+- Registration is exclusive for non-persistent rows (collision rejected if the existing owner pid is alive).
+- Persistent rows: re-registering the same id is an idempotent upsert (updates `on_delivery`).
+- `ext:<label>` senders can send but have no inbox.
 
-### 1.4 Example envelopes
+## 2. Store operations
 
-`ask` envelope on the wire:
+All operations are performed in-process by the caller (CLI, shim, or embedded
+crate). See [fr:12-store](../fr/12-store.md) for the schema and concurrency rules.
 
-```json
-{
-  "id": "msg_01HXY_ASK",
-  "kind": "ask",
-  "from": "orch",
-  "to": "impl",
-  "timeout_ms": 600000,
-  "ts": "2026-05-21T08:12:34Z",
-  "payload": { "task": "Refactor module X" }
-}
-```
-
-Corresponding `reply`:
-
-```json
-{
-  "id": "msg_01HXY_REPLY",
-  "kind": "reply",
-  "from": "impl",
-  "to": "orch",
-  "request_id": "msg_01HXY_ASK",
-  "ts": "2026-05-21T08:13:10Z",
-  "payload": { "result": "ok", "files_changed": 3 }
-}
-```
-
-Broadcast `event`:
-
-```json
-{
-  "id": "msg_01HXY_EVT",
-  "kind": "event",
-  "from": "ext:ci",
-  "ts": "2026-05-21T08:14:00Z",
-  "payload": { "type": "build_finished", "status": "green" }
-}
-```
-
-## 2. REST surface
-
-All endpoints are versioned under `/v1` and bound to `127.0.0.1`.
-
-| Method | Path | Purpose |
+| Operation | Semantics | Key error codes |
 |---|---|---|
-| `POST` | `/v1/instances` | Register `{instance_id, mailbox_size?}` |
-| `DELETE` | `/v1/instances/{id}` | Unregister |
-| `GET` | `/v1/instances` | List active instances |
-| `GET` | `/v1/instances/{id}/inbox` | SSE — envelopes addressed to `{id}` |
-| `POST` | `/v1/instances/{id}/messages` | Send a `message` to `{id}` |
-| `POST` | `/v1/instances/{id}/ask` | Ask `{id}`; HTTP blocks until reply or timeout |
-| `POST` | `/v1/instances/{id}/replies` | Reply to an ask `{request_id, payload}` |
-| `GET` | `/v1/events` | SSE — global broadcast + history replay (`since`, `instance`, `kind`) |
-| `POST` | `/v1/events` | Publish a broadcast event from external |
+| `register(id, persistent?, on_delivery?)` | Claim an instance id. Non-persistent rows are anchored to the caller's pid (fr:02). | `instance_id_taken`, `invalid_instance_id` |
+| `unregister(id)` | Remove a registration; inbox file is kept. An absent row is not an error: it reports `ok: false`. | — |
+| `list()` | Return all rows with liveness status. | — |
+| `send(from, to, payload)` | One-way message: check recipient, log to event_log, append to inbox spool, fire on_delivery hook. Returns the envelope id. | `unknown_instance` |
+| `ask(from, to, payload, timeout_ms?)` | RPC send + poll asks table for reply. Blocks until reply or timeout. | `unknown_instance`, `timeout` |
+| `ask_result(request_id)` | Fetch status of an earlier ask: `Pending`, `Replied`, or `Expired`. Used to retrieve late replies after a timeout. | `unknown_request_id` |
+| `reply(from, request_id, payload)` | Write reply_payload to asks row; first write wins. Appends reply envelope to event_log. | `unknown_request_id` |
+| `check_inbox(id)` | Atomic rename-snapshot drain. Returns `{"envelopes": [...]}`. Non-blocking. | `io` |
+| `await_message(id, timeout_ms?)` | Like check_inbox but blocks until at least one envelope is spooled or timeout elapses. Returns `{"envelopes": []}` on timeout (not an error). | `io` |
+| `publish_event(from, payload)` | Append a broadcast event to the event log. Returns event id. | — |
+| `events_since(cursor, filter?)` | Read event log from cursor; filter by `instance`, `kind`, or recipient `to`. | — |
+| `watch(id, interval_ms?)` | Live stream of envelopes addressed to `id`, one compact JSON line per event. Starts at current max_seq (no replay). Never consumes the inbox. Runs until killed. | — |
+| `sweep(grace_secs?, purge_orphans?)` | Crash recovery: prune dead non-persistent registrations, recover inbox snapshots stranded by crashed consumers, re-fire stale on_delivery hooks, report expired asks. | — |
 
-### 2.1 Registration lifetime
+### 2.1 Error codes
 
-`POST /v1/instances` binds the registration to the HTTP connection's lifetime
-via a keep-alive long-poll: the response is `200 OK` with `Connection:
-keep-alive` and the body is an SSE-style heartbeat stream. Closing the
-connection unregisters.
-
-For clients that use pooled connections, an explicit `DELETE
-/v1/instances/{id}` is also supported.
-
-### 2.2 Ask timeout and inbox ownership
-
-- `POST /v1/instances/{id}/ask` accepts `?timeout_ms=` (default `30_000`,
-  max 24h). On timeout the server returns `504` with body
-  `{"error": "timeout", "request_id": "..."}`.
-- `GET /v1/instances/{id}/inbox` requires the caller to be the registered
-  owner (matched by connection). A different connection requesting another
-  instance's inbox returns `403`.
-
-### 2.3 Example REST exchanges
-
-Send a message:
-
-```bash
-curl -X POST http://127.0.0.1:PORT/v1/instances/impl-ENG-123/messages \
-     -H 'content-type: application/json' \
-     -d '{"payload": {"hint": "use TDD"}}'
-```
-
-Ask with timeout (blocks until reply or 504):
-
-```bash
-curl -X POST 'http://127.0.0.1:PORT/v1/instances/slack-ask/ask?timeout_ms=1800000' \
-     -H 'content-type: application/json' \
-     -d '{"payload": {"question": "Deploy now?", "options": ["yes","no"]}}'
-```
-
-Reply to an ask (used by bridges):
-
-```bash
-curl -X POST http://127.0.0.1:PORT/v1/instances/slack-ask/replies \
-     -H 'content-type: application/json' \
-     -d '{"request_id": "msg_01HXY_ASK", "payload": {"choice": "yes"}}'
-```
-
-Replay events since a timestamp:
-
-```
-GET /v1/events?since=2026-05-21T08:00:00Z&instance=impl-ENG-123
-```
-
-The daemon snapshots the log offset at subscribe time, replays matching
-envelopes up to that offset, then attaches the subscriber to live broadcasts —
-no gap, no duplicate. Clients should still dedup by envelope `id` defensively
-across reconnects.
-
-## 3. MCP shim (`agentbus-stdio`)
-
-The shim connects to the daemon's Unix socket and exposes the bus as MCP tools.
-
-| Tool | Purpose |
+| Code | When |
 |---|---|
-| `register(instance_id, mailbox_size?)` | Claim ID for this session |
-| `unregister()` | Release ID early (also happens on shim exit) |
-| `await_message(timeout_secs?)` | Block until a message arrives, or return empty on timeout |
-| `check_inbox()` | Non-blocking drain (returns 0..N envelopes) |
-| `reply(request_id, payload)` | Answer an inbound `ask` |
-| `send(to, payload)` | One-way message to another instance |
-| `ask(to, payload, timeout_secs?)` | RPC; blocks until reply or timeout |
-| `publish_event(kind, payload)` | Broadcast to all SSE subscribers |
-| `list_instances()` | Enumerate active instances |
+| `unknown_instance` | send/ask finds no registration for the recipient |
+| `instance_id_taken` | register finds an existing live owner (non-persistent collision) |
+| `invalid_instance_id` | id fails `[A-Za-z0-9_.:-]{1,128}` |
+| `timeout` | ask polling deadline elapsed before a reply arrived |
+| `unknown_request_id` | reply or ask_result finds no asks row for the given request_id |
+| `store_locked` | SQLite busy_timeout (5 s) exhausted |
+| `invalid_envelope` | fr:01 validation failed |
+| `io` | filesystem I/O error (inbox append, layout creation) |
 
-### 3.1 Reconnect behavior
+## 3. MCP tool surface
 
-The shim reconnects to the daemon with exponential backoff (200 ms, 500 ms,
-1 s, 3 s, 3 s ...) for the first 5 seconds. Thereafter, each tool call returns
-`{code: "daemon_unavailable", retryable: true}` immediately. The shim never
-crashes the MCP client.
+The `agentbus-stdio` shim exposes nine MCP tools over a synchronous JSON-RPC
+line loop on stdin/stdout. It opens the store directly — no daemon or socket.
+See [fr:08-mcp-shim](../fr/08-mcp-shim.md) for the full specification.
 
-### 3.2 Example MCP tool exchange
+| Tool | Input (required) | Purpose |
+|---|---|---|
+| `register` | `instance_id`; opt: `persistent`, `on_delivery` | Claim an id for this session |
+| `unregister` | `instance_id` | Release an id early |
+| `list_instances` | — | Enumerate registered instances with liveness |
+| `await_message` | `instance_id`; opt: `timeout_ms` | Block until messages arrive (returns `{"envelopes": [...]}`) |
+| `check_inbox` | `instance_id` | Non-blocking drain (returns `{"envelopes": [...]}`) |
+| `send` | `from`, `to`, `payload` | One-way message |
+| `ask` | `from`, `to`, `payload`; opt: `timeout_ms` | RPC; blocks until reply |
+| `reply` | `from`, `request_id`, `payload` | Answer an inbound ask |
+| `publish_event` | `from`, `payload` | Append a broadcast event |
 
-`orch` instance (caller):
+### 3.1 v0.2 surface changes from v0.1
 
-```jsonc
-// tool: ask
+- `register` gains `persistent` and `on_delivery`; loses `mailbox_size` (spool files are unbounded).
+- `await_message` and `check_inbox` return envelope batches (`{"envelopes": [...]}`) instead of a single envelope. `await_message` returns an empty list on timeout.
+- There is no socket reconnect logic — the shim owns the store connection.
+
+### 3.2 Error shape
+
+Tool errors are JSON-RPC error objects:
+
+```json
+{ "code": -32000, "message": "<stable code>", "data": "<human detail>" }
+```
+
+The `message` field carries the stable machine-readable code (e.g. `unknown_instance`). On `ask` timeout the error `message` is `timeout` and `data` contains prose with the `request_id`. Callers that need the id should use `ask_result` rather than parse the prose.
+
+### 3.3 Example MCP tool exchange
+
+`orch` calls `ask`:
+
+```json
 {
+  "from": "orch",
   "to": "impl",
   "payload": { "task": "Refactor module X" },
-  "timeout_secs": 600
-}
-// returns:
-{ "result": "ok", "files_changed": 3 }
-```
-
-`impl` instance (callee):
-
-```jsonc
-// tool: await_message
-{ "timeout_secs": 60 }
-// returns an envelope:
-{
-  "id": "msg_01HXY_ASK",
-  "kind": "ask",
-  "from": "orch",
-  "to": "impl",
-  "ts": "2026-05-21T08:12:34Z",
-  "payload": { "task": "Refactor module X" }
-}
-
-// tool: reply
-{
-  "request_id": "msg_01HXY_ASK",
-  "payload": { "result": "ok", "files_changed": 3 }
+  "timeout_ms": 600000
 }
 ```
 
-## 4. Error codes
+Returns:
 
-Common error shapes the daemon returns:
+```json
+{ "request_id": "msg_01HXY_ASK", "payload": { "result": "ok", "files_changed": 3 } }
+```
 
-| Code | Meaning |
-|---|---|
-| `instance_id_taken` | Registration collision with a different owner connection |
-| `instance_disconnected` | Pending `ask` cancelled because peer's owner connection dropped |
-| `unknown_request_id` | `reply` arrived for an ask that timed out or never existed |
-| `timeout` | `ask` exceeded its `timeout_ms` |
-| `daemon_unavailable` | Shim cannot reach daemon socket (retryable) |
-| `instance_closed` | `await_message` resolved because the mailbox was closed |
+`impl` calls `check_inbox` and gets:
+
+```json
+{
+  "envelopes": [
+    {
+      "id": "msg_01HXY_ASK",
+      "kind": "ask",
+      "from": "orch",
+      "to": "impl",
+      "timeout_ms": 600000,
+      "ts": "2026-05-21T08:12:34Z",
+      "payload": { "task": "Refactor module X" }
+    }
+  ]
+}
+```
+
+`impl` calls `reply`:
+
+```json
+{ "from": "impl", "request_id": "msg_01HXY_ASK", "payload": { "result": "ok", "files_changed": 3 } }
+```
+
+## 4. CLI invocation examples
+
+`agentbus` opens `AGENTBUS_DIR` (default `~/.agentbus`) directly. See
+[fr:10-cli](../fr/10-cli.md) for the full verb table.
+
+### register / ls / unregister
+
+```bash
+# Register a persistent address with an on_delivery hook
+agentbus register impl --persistent --on-delivery "bellhop dispatch impl"
+# {"ok": true}
+
+# List
+agentbus ls
+# {
+#   "instances": [
+#     { "id": "impl", "pid": null, "persistent": true, "on_delivery": "bellhop dispatch impl" }
+#   ]
+# }
+
+# Unregister
+agentbus unregister impl
+# {"ok": true}
+```
+
+### send
+
+Payload is read from `--file` or stdin:
+
+```bash
+echo '{"hint": "use TDD"}' | agentbus send impl --from orch
+# {"id": "msg_01HXYZ..."}
+```
+
+### ask / ask-result
+
+```bash
+# Ask (blocks until reply or timeout):
+echo '{"task": "review PR"}' | agentbus ask impl --from orch --timeout-ms 120000
+# On success, prints pretty JSON of the reply payload.
+# On timeout (exit 2), stderr contains:
+#   error[timeout]: no reply within 120000 ms; retrieve a late reply with: agentbus ask-result msg_01HXYZ...
+
+# Retrieve a late reply:
+agentbus ask-result msg_01HXYZ...
+# {
+#   "status": "replied",
+#   "payload": { "verdict": "lgtm" },
+#   ...
+# }
+```
+
+### reply
+
+```bash
+echo '{"verdict": "lgtm"}' | agentbus reply msg_01HXYZ... impl
+# {"ok": true}
+```
+
+### check-inbox / await
+
+```bash
+agentbus check-inbox impl
+# {"envelopes": [...]}
+
+agentbus await impl --timeout-ms 5000
+# {"envelopes": [...]}   (empty list if nothing arrived)
+```
+
+### publish / events
+
+```bash
+echo '{"type": "build_ok"}' | agentbus publish --from ext:ci
+# {"id": "msg_01HEVT..."}
+
+agentbus events
+# {"seq":1,"envelope":{"id":"msg_01HEVT...","kind":"event","from":"ext:ci","ts":"...","payload":{"type":"build_ok"}}}
+
+agentbus events --follow --interval-ms 1000
+# streams indefinitely
+```
+
+### watch
+
+```bash
+agentbus watch impl --interval-ms 500
+# streams one compact JSON envelope per line as messages arrive; never exits unless killed
+```
+
+### sweep
+
+```bash
+agentbus sweep
+# {
+#   "dead_instances": [],
+#   "recovered_inboxes": [],
+#   "rehooked": [],
+#   "expired_asks": [],
+#   "purged_inboxes": []
+# }
+```
+
+## 5. Delivery modes
+
+Five complementary delivery modes suit different interaction patterns.
+
+| Mode | Trigger | Consumes inbox? | Blocks? | Reference |
+|---|---|---|---|---|
+| `on_delivery` hook | sender-side, fires after each inbox append | no | yes (15 s cap) | fr:13-on-delivery |
+| `await_message` | recipient polls blocking call | yes | yes (until message or timeout) | fr:08-mcp-shim |
+| `check_inbox` | recipient pull | yes | no | fr:09-hook-inbox |
+| `watch` streaming | recipient-side process tails event log | no | runs until killed | fr:14-watch |
+| hook-inbox file | SessionStart/UserPromptSubmit hook script | yes (rename-snapshot) | no | fr:09-hook-inbox |
+
+Key properties:
+
+- `on_delivery` is sender-executed and bounded to 15 seconds. It wakes a
+  recipient that cannot keep a long-running process.
+- `await_message` burns a tool-call slot; useful for sessions that exist
+  solely to receive.
+- `check_inbox` is a non-blocking pull; suits session-boundary polling via a
+  Stop/turn hook.
+- `watch` is a long-running per-recipient notifier for harnesses that can host
+  a persistent monitor process (e.g. Claude Code's Monitor tool). It never
+  consumes the inbox; agents react by calling `check_inbox`. See
+  [ref:watch-integration](watch-integration.md) for the pattern.
+- hook-inbox file consumption uses an atomic rename-snapshot; the reference
+  script (`scripts/inject-inbox.sh`) implements this for shell hooks.

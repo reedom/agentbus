@@ -10,32 +10,33 @@ refs:
 # Example: extbot orchestrator integration
 
 This walkthrough shows how the [extbot][extbot] orchestrator can drive a Claude
-Code instance via agentbus, using only the REST surface from the extbot side.
+Code instance via agentbus, using the CLI from the extbot side.
 
 The Claude instance registers as `extbot-<ticket>` through the MCP shim;
-extbot sends it work and observes results over HTTP.
+extbot sends it work and observes results via the `agentbus` CLI or by
+embedding `agentbus-core` directly.
 
 [extbot]: https://example.invalid/extbot
 
 ## 1. Topology
 
 ```
-extbot                       agentbusd                  Claude (MCP)
- |                            |                          |
- |                            |<-- register("extbot-ENG-123") --|
- |                            |                          |
- |--- POST /messages -------->|--- envelope --> await_message -->|
- |                            |                          |
- |--- POST /ask (blocks) ---->|--- envelope --> await_message -->|
- |                            |<-- reply ----------------|
- |<--- 200 with reply --------|                          |
- |                            |                          |
- |--- POST /events ---------->|--- broadcast SSE -->     |
+extbot (CLI / embedded)         store (~/.agentbus)         Claude (MCP shim)
+       |                               |                           |
+       |                               |<-- register("extbot-ENG-123") --|
+       |                               |                           |
+       |--- agentbus send ------------>|--- inbox append --------->|
+       |                               |--- on_delivery hook ----->|
+       |                               |                           |
+       |--- agentbus ask (blocks) ---->|--- inbox append --------->|
+       |                               |<-- reply written to asks -|
+       |<--- reply payload ------------|                           |
+       |                               |                           |
+       |--- agentbus publish --------->|--- event_log append ----->|
 ```
 
-extbot is purely an HTTP client. It does not register an instance — it talks as
-an unregistered external using `from: "ext:extbot"` automatically attached by
-the daemon at ingress.
+extbot is a store writer. It does not register an instance — it sends as
+`ext:extbot` (the CLI default) or as a registered id of its own.
 
 ## 2. Claude side: register
 
@@ -43,17 +44,20 @@ When extbot launches a Claude session for ticket `ENG-123`, Claude's MCP client
 loads the `agentbus` server and calls `register`:
 
 ```jsonc
-{ "instance_id": "extbot-ENG-123", "mailbox_size": 256 }
+{ "instance_id": "extbot-ENG-123", "persistent": false }
 ```
 
-The shim binds the registration to its Unix socket connection. When Claude
-exits, the shim exits, the socket closes, and the daemon auto-unregisters.
+The shim tracks this as a non-persistent registration tied to the shim process.
+When Claude exits, the shim exits and the registration becomes a dead row;
+`agentbus sweep` reclaims it.
 
-Claude then enters a loop, typically driven by an agent or hook:
+Claude then enters a loop driven by `check_inbox` at each turn, or blocks via
+`await_message`:
 
 ```jsonc
-// tool: await_message
-{ "timeout_secs": 60 }
+// tool: check_inbox
+{ "instance_id": "extbot-ENG-123" }
+// returns: {"envelopes": [...]}
 ```
 
 ## 3. extbot side: inject context as a `message`
@@ -62,61 +66,68 @@ When extbot wants to feed in extra context — say, the latest CI failure log �
 it sends a one-way `message`:
 
 ```bash
-curl -X POST http://127.0.0.1:PORT/v1/instances/extbot-ENG-123/messages \
-     -H 'content-type: application/json' \
-     -d '{
-       "payload": {
-         "type": "ci_failure",
-         "build_id": 4321,
-         "log_tail": "...",
-         "hint": "look at module X"
-       }
-     }'
+agentbus send extbot-ENG-123 --from ext:extbot <<'EOF'
+{
+  "type": "ci_failure",
+  "build_id": 4321,
+  "log_tail": "...",
+  "hint": "look at module X"
+}
+EOF
+# {"id": "msg_01HXY_CI"}
 ```
 
-Claude's `await_message` returns with:
+Claude's `check_inbox` returns the envelope in the next batch:
 
 ```json
 {
-  "id": "msg_01HXY_CI",
-  "kind": "message",
-  "from": "ext:extbot",
-  "to": "extbot-ENG-123",
-  "ts": "2026-05-21T08:12:34Z",
-  "payload": {
-    "type": "ci_failure",
-    "build_id": 4321,
-    "log_tail": "...",
-    "hint": "look at module X"
-  }
+  "envelopes": [
+    {
+      "id": "msg_01HXY_CI",
+      "kind": "message",
+      "from": "ext:extbot",
+      "to": "extbot-ENG-123",
+      "ts": "2026-05-21T08:12:34Z",
+      "payload": {
+        "type": "ci_failure",
+        "build_id": 4321,
+        "log_tail": "...",
+        "hint": "look at module X"
+      }
+    }
+  ]
 }
 ```
 
-Claude can incorporate the `payload` into its working context and continue.
+Claude incorporates the `payload` into its working context and continues.
 
 ## 4. extbot side: ask Claude a question synchronously
 
 When extbot needs an answer before proceeding (for example, "is this PR ready
-to merge?"), it uses `ask`. The HTTP call blocks until Claude `reply`s or the
+to merge?"), it uses `ask`. The CLI call blocks until Claude replies or the
 timeout expires.
 
 ```bash
-curl -X POST 'http://127.0.0.1:PORT/v1/instances/extbot-ENG-123/ask?timeout_ms=600000' \
-     -H 'content-type: application/json' \
-     -d '{
-       "payload": {
-         "question": "Ready to merge PR #4321?",
-         "checks":   ["tests","lint","review"]
-       }
-     }'
+agentbus ask extbot-ENG-123 --from ext:extbot --timeout-ms 600000 <<'EOF'
+{
+  "question": "Ready to merge PR #4321?",
+  "checks": ["tests", "lint", "review"]
+}
+EOF
+# On success, prints the reply payload as pretty JSON:
+# {
+#   "ready": true,
+#   "notes": "All checks green, one nit on naming addressed."
+# }
 ```
 
-Claude side:
+Claude side (MCP tool calls):
 
 ```jsonc
-// tool: await_message — returns kind=ask envelope
+// check_inbox returns kind=ask envelope
 // tool: reply
 {
+  "from": "extbot-ENG-123",
   "request_id": "msg_01HXY_ASK_EXTBOT",
   "payload": {
     "ready": true,
@@ -125,66 +136,50 @@ Claude side:
 }
 ```
 
-extbot's HTTP response is `200` with body:
+On timeout (exit 2), stderr contains the request_id hint:
 
-```json
-{
-  "ready": true,
-  "notes": "All checks green, one nit on naming addressed."
-}
 ```
-
-If Claude never replies within `timeout_ms`, extbot gets `504` with body
-`{"error": "timeout", "request_id": "msg_01HXY_ASK_EXTBOT"}`.
+error[timeout]: no reply within 600000 ms; retrieve a late reply with: agentbus ask-result msg_01HXY_ASK_EXTBOT
+```
 
 ## 5. extbot side: broadcast events for observers
 
-For status events that any subscribed dashboard or sibling agent may want,
-extbot uses broadcast `event`s:
+For status events that any sibling agent or dashboard may want, extbot uses
+broadcast `event`s appended to the event log:
 
 ```bash
-curl -X POST http://127.0.0.1:PORT/v1/events \
-     -H 'content-type: application/json' \
-     -d '{
-       "kind": "event",
-       "payload": {
-         "type":     "ticket_state_changed",
-         "ticket":   "ENG-123",
-         "from":     "in_progress",
-         "to":       "in_review"
-       }
-     }'
+agentbus publish --from ext:extbot <<'EOF'
+{
+  "type": "ticket_state_changed",
+  "ticket": "ENG-123",
+  "from": "in_progress",
+  "to": "in_review"
+}
+EOF
+# {"id": "msg_01HEVT..."}
 ```
 
-Any client subscribed to `GET /v1/events` (or `GET
-/v1/events?instance=extbot-ENG-123`) sees the envelope. The daemon stamps
-`from: "ext:extbot"` (or whatever label extbot supplies) and writes it to the
-JSONL log for replay.
+Any process can read the event log:
 
-## 6. extbot side: replay missed events
+```bash
+agentbus events --instance extbot-ENG-123
+# {"seq":1,"envelope":{"id":"msg_01HEVT...","kind":"event","from":"ext:extbot","ts":"...","payload":{...}}}
 
-If a extbot dashboard process restarts, it can resume from its last seen
-timestamp:
-
-```
-GET /v1/events?since=2026-05-21T08:00:00Z
+agentbus events --follow --since 42
+# streams from seq 42 indefinitely
 ```
 
-The daemon replays matching envelopes from the JSONL log up to the snapshot
-offset, then attaches the subscriber to live broadcasts. Dedup by envelope
-`id` on the client to defend against reconnect overlap.
+## 6. Lifetime considerations
 
-## 7. Lifetime considerations
-
-- The Claude registration is bound to the MCP shim's Unix socket. extbot does
-  not need to manage its lifetime — when the Claude session exits, the
-  instance is gone, and any blocked extbot `ask` against it returns
-  `instance_disconnected` immediately.
-- extbot should treat `instance_disconnected` and `timeout` differently:
-  - `instance_disconnected` — Claude crashed or exited. Restart it, or fail
-    the ticket.
-  - `timeout` — Claude is alive but didn't answer in time. Decide based on
-    the question (escalate to a human, retry with smaller scope, etc.).
-- The instance ID `extbot-<ticket>` is exclusive. If extbot tries to spawn a
-  second Claude for the same ticket while the first is still alive,
-  registration fails with `instance_id_taken`. Use that as a cheap lock.
+- The Claude registration is a non-persistent row tied to the shim pid. extbot
+  does not need to manage its lifetime — when the Claude session exits, the
+  shim exits, the row becomes a dead entry, and `agentbus sweep` reclaims it.
+- `unknown_instance` from `send` or `ask` means Claude is not registered.
+  extbot should restart the Claude session or fail the ticket.
+- `timeout` from `ask` means Claude is registered but did not answer in time.
+  Use `agentbus ask-result <id>` to retrieve a late reply if Claude answers
+  after the deadline.
+- The instance ID `extbot-<ticket>` is exclusive for live (pid-alive) rows.
+  If extbot tries to spawn a second Claude for the same ticket while the first
+  is still alive, registration fails with `instance_id_taken`. Use that as a
+  cheap lock.

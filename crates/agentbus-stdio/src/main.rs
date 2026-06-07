@@ -1,27 +1,16 @@
-mod tools;
-mod uds_client;
+//! MCP stdio shim over the spool store (fr:08, v0.2): no daemon, no socket.
+//! Single-threaded line loop; tool calls run synchronously against ~/.agentbus.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+mod tools;
+
+use std::io::{BufRead, Write};
 
 use serde_json::json;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Stdin};
+
+use agentbus_core::store::Store;
 use tracing_subscriber::EnvFilter;
 
-use uds_client::{ClientError, UdsClient};
-
-fn socket_path() -> PathBuf {
-    if let Ok(p) = std::env::var("AGENTBUS_SOCKET") {
-        return PathBuf::from(p);
-    }
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("agentbus.sock")
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -29,19 +18,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let client = Arc::new(UdsClient::new(socket_path()));
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-    run(stdin, stdout, client).await
-}
-
-async fn run(
-    stdin: Stdin,
-    mut stdout: tokio::io::Stdout,
-    client: Arc<UdsClient>,
-) -> anyhow::Result<()> {
-    let mut lines = BufReader::new(stdin).lines();
-    while let Some(line) = lines.next_line().await? {
+    let mut store = Store::open()?;
+    let mut session = tools::Session::default();
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let line = line?;
         if line.trim().is_empty() {
             continue;
         }
@@ -55,21 +37,26 @@ async fn run(
         let id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let params = req.get("params").cloned().unwrap_or(json!({}));
-        let resp = handle(client.clone(), method, params).await;
+        let resp = handle(&mut store, &mut session, method, params);
         let envelope = match resp {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
             Err(e) => json!({"jsonrpc": "2.0", "id": id, "error": e}),
         };
         let mut buf = serde_json::to_vec(&envelope)?;
         buf.push(b'\n');
-        stdout.write_all(&buf).await?;
-        stdout.flush().await?;
+        stdout.write_all(&buf)?;
+        stdout.flush()?;
     }
+    // Stdin closed: release this session's non-persistent registrations.
+    // Abrupt kills and the I/O-error early returns above skip this; the
+    // pid-liveness sweep reclaims those rows (spec section 12, item 4).
+    session.cleanup(&mut store);
     Ok(())
 }
 
-async fn handle(
-    client: Arc<UdsClient>,
+fn handle(
+    store: &mut Store,
+    session: &mut tools::Session,
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, serde_json::Value> {
@@ -95,25 +82,19 @@ async fn handle(
         "tools/call" => {
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            match tools::call(&client, name, args).await {
-                Ok(result) => Ok(json!({
-                    "content": [{
-                        "type": "text",
-                        "text": serde_json::to_string(&result).unwrap()
-                    }]
-                })),
-                Err(ClientError::Unavailable(msg)) => Err(json!({
-                    "code": -32000,
-                    "message": "daemon_unavailable",
-                    "data": msg
-                })),
-                Err(ClientError::Rpc {
-                    code,
-                    message,
-                    data,
-                }) => Err(json!({"code": code, "message": message, "data": data})),
-                Err(e) => Err(json!({"code": -32603, "message": e.to_string()})),
-            }
+            let result = tools::call(store, session, name, args)?;
+            // Serializing a Value cannot fail today, but a panic here would
+            // tear down the whole stdio session; degrade to a JSON-RPC error.
+            let text = serde_json::to_string(&result).map_err(|e| {
+                json!({"code": -32603, "message": "internal error",
+                       "data": format!("serialize result: {e}")})
+            })?;
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": text
+                }]
+            }))
         }
         _ => Err(json!({"code": -32601, "message": "method not found"})),
     }

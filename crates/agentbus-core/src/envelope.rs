@@ -44,13 +44,44 @@ pub enum ValidationError {
     EmptyId,
 }
 
+impl Kind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Kind::Message => "message",
+            Kind::Ask => "ask",
+            Kind::Reply => "reply",
+            Kind::Event => "event",
+        }
+    }
+}
+
+impl std::str::FromStr for Kind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "message" => Ok(Kind::Message),
+            "ask" => Ok(Kind::Ask),
+            "reply" => Ok(Kind::Reply),
+            "event" => Ok(Kind::Event),
+            other => Err(format!("unknown kind `{other}`")),
+        }
+    }
+}
+
 impl Envelope {
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.id.is_empty() { return Err(ValidationError::EmptyId); }
-        if self.from.is_empty() { return Err(ValidationError::EmptyFrom); }
+        if self.id.is_empty() {
+            return Err(ValidationError::EmptyId);
+        }
+        if self.from.is_empty() {
+            return Err(ValidationError::EmptyFrom);
+        }
         match self.kind {
             Kind::Ask => {
-                if self.to.is_none() { return Err(ValidationError::AskMissingTo); }
+                if self.to.is_none() {
+                    return Err(ValidationError::AskMissingTo);
+                }
             }
             Kind::Reply => {
                 if self.to.is_none() || self.request_id.is_none() {
@@ -58,10 +89,14 @@ impl Envelope {
                 }
             }
             Kind::Message => {
-                if self.to.is_none() { return Err(ValidationError::MessageMissingTo); }
+                if self.to.is_none() {
+                    return Err(ValidationError::MessageMissingTo);
+                }
             }
             Kind::Event => {
-                if self.to.is_some() { return Err(ValidationError::EventHasTo); }
+                if self.to.is_some() {
+                    return Err(ValidationError::EventHasTo);
+                }
             }
         }
         Ok(())
@@ -98,7 +133,10 @@ mod tests {
     fn validation_message_requires_to() {
         let mut env = sample(Kind::Message);
         env.to = None;
-        assert!(matches!(env.validate(), Err(ValidationError::MessageMissingTo)));
+        assert!(matches!(
+            env.validate(),
+            Err(ValidationError::MessageMissingTo)
+        ));
     }
 
     #[test]
@@ -112,6 +150,21 @@ mod tests {
     fn validation_reply_requires_request_id() {
         let mut env = sample(Kind::Reply);
         env.request_id = None;
-        assert!(matches!(env.validate(), Err(ValidationError::ReplyMissingFields)));
+        assert!(matches!(
+            env.validate(),
+            Err(ValidationError::ReplyMissingFields)
+        ));
+    }
+
+    #[test]
+    fn kind_as_str_roundtrips_with_fromstr() {
+        for kind in [Kind::Message, Kind::Ask, Kind::Reply, Kind::Event] {
+            assert_eq!(kind.as_str().parse::<Kind>().unwrap(), kind);
+        }
+    }
+
+    #[test]
+    fn kind_fromstr_rejects_unknown() {
+        assert!("bogus".parse::<Kind>().is_err());
     }
 }
