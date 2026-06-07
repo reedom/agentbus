@@ -3,17 +3,17 @@ use crate::envelope::ValidationError;
 /// Spec section 8 error model. `code()` is the stable wire identifier.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    #[error("unknown instance `{0}`")]
+    #[error("unknown instance `{0}` (recipients must register first; check list_instances / `agentbus ls`)")]
     UnknownInstance(String),
-    #[error("instance_id `{0}` is registered to another live process")]
+    #[error("instance_id `{0}` is registered to another live process (pick a different id; dead owners are replaced automatically)")]
     InstanceIdTaken(String),
     #[error("invalid instance_id (must match [A-Za-z0-9_.:-]{{1,128}})")]
     InvalidInstanceId,
     #[error("ask `{0}` timed out (a late reply stays retrievable via ask-result)")]
     Timeout(String),
-    #[error("unknown request_id `{0}`")]
+    #[error("unknown request_id `{0}` (the request_id must be the ask envelope's id; plain `message` envelopes take no reply)")]
     UnknownRequestId(String),
-    #[error("store locked: busy_timeout exhausted")]
+    #[error("store locked: busy_timeout exhausted (transient write contention; retry after a short wait)")]
     StoreLocked,
     #[error("invalid envelope: {0}")]
     InvalidEnvelope(#[from] ValidationError),
@@ -82,5 +82,20 @@ mod tests {
             StoreError::Sqlite(rusqlite::Error::InvalidQuery).code(),
             "sqlite"
         );
+    }
+
+    #[test]
+    fn messages_carry_recovery_hints() {
+        let unknown = StoreError::UnknownInstance("x".into()).to_string();
+        assert!(unknown.contains("register"), "got: {unknown}");
+        let taken = StoreError::InstanceIdTaken("x".into()).to_string();
+        assert!(taken.contains("different id"), "got: {taken}");
+        let no_ask = StoreError::UnknownRequestId("x".into()).to_string();
+        assert!(no_ask.contains("ask envelope"), "got: {no_ask}");
+        let locked = StoreError::StoreLocked.to_string();
+        assert!(locked.contains("retry"), "got: {locked}");
+        // Timeout already carries its hint; pin it so it never regresses.
+        let timeout = StoreError::Timeout("x".into()).to_string();
+        assert!(timeout.contains("ask-result"), "got: {timeout}");
     }
 }
