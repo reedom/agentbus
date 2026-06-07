@@ -21,14 +21,14 @@ All surfaces speak the same envelope format.
 
 | Crate | Purpose |
 |---|---|
-| `agentbus-core` | Envelope, store, router, event log, and inbox types. |
+| `agentbus-core` | Envelope and id types plus the spool store (registry, delivery, asks, event log). |
 | `agentbus-stdio` | stdio MCP shim exposing the store as nine MCP tools. |
 | `agentbus-cli` | Command-line client (`agentbus`) over the store directly. |
 
 ## Install
 
 ```bash
-cargo install agentbus-cli agentbus-stdio
+cargo install agentbus-cli@^0.2 agentbus-stdio@^0.2
 ```
 
 No daemon to start. Register an instance and send:

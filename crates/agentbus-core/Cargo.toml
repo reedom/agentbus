@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-description = "Core types for agentbus: envelopes, registry, mailbox, router, and event log."
+description = "Core types for agentbus: envelopes and the spool store (registry, delivery, asks, event log)."
 
 [dependencies]
 thiserror = { workspace = true }

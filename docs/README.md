@@ -14,7 +14,7 @@ launch.
 ## Install
 
 ```bash
-cargo install agentbus-cli agentbus-stdio
+cargo install agentbus-cli@^0.2 agentbus-stdio@^0.2
 ```
 
 Register an instance and send a message:
