@@ -182,3 +182,36 @@ fn watch_streams_new_envelopes_without_consuming() {
     let inbox = stdout_json(&agentbus(tmp.path(), &["check-inbox", "bob"], None));
     assert_eq!(inbox["envelopes"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn register_with_explicit_pid_anchors_to_that_process() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Anchor the row to this test process, which outlives the CLI invocation
+    // (the session-pid pattern from the skill-first spec).
+    let my_pid = std::process::id();
+    let reg = agentbus(
+        tmp.path(),
+        &["register", "sess", "--pid", &my_pid.to_string()],
+        None,
+    );
+    assert_eq!(stdout_json(&reg)["ok"], true);
+    let ls = stdout_json(&agentbus(tmp.path(), &["ls"], None));
+    assert_eq!(ls["instances"][0]["id"], "sess");
+    assert_eq!(ls["instances"][0]["pid"], my_pid);
+    // The CLI process is long gone; liveness must come from the anchored pid.
+    assert_eq!(ls["instances"][0]["alive"], true);
+}
+
+#[test]
+fn register_rejects_pid_combined_with_persistent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = agentbus(
+        tmp.path(),
+        &["register", "sess", "--pid", "1", "--persistent"],
+        None,
+    );
+    assert!(!out.status.success());
+    // Pin the clap conflict specifically, not just any failure.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("cannot be used with"), "stderr: {stderr}");
+}
