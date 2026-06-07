@@ -2,6 +2,7 @@
 //! Single-threaded line loop; tool calls run synchronously against ~/.agentbus.
 
 mod tools;
+mod instructions;
 
 use std::io::{BufRead, Write};
 
