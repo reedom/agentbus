@@ -73,7 +73,7 @@ crate). See [fr:12-store](../fr/12-store.md) for the schema and concurrency rule
 
 | Operation | Semantics | Key error codes |
 |---|---|---|
-| `register(id, persistent?, on_delivery?)` | Claim an instance id. Non-persistent rows are anchored to the caller's pid (fr:02). | `instance_id_taken`, `invalid_instance_id` |
+| `register(id, persistent?, on_delivery?, pid?)` | Claim an instance id. Non-persistent rows are anchored to the caller's pid, or to an explicit `pid` (CLI `--pid`) for session-scoped identity (fr:02). | `instance_id_taken`, `invalid_instance_id` |
 | `unregister(id)` | Remove a registration; inbox file is kept. An absent row is not an error: it reports `ok: false`. | — |
 | `list()` | Return all rows with liveness status. | — |
 | `send(from, to, payload)` | One-way message: check recipient, log to event_log, append to inbox spool, fire on_delivery hook. Returns the envelope id. | `unknown_instance` |
@@ -100,11 +100,20 @@ crate). See [fr:12-store](../fr/12-store.md) for the schema and concurrency rule
 | `invalid_envelope` | fr:01 validation failed |
 | `io` | filesystem I/O error (inbox append, layout creation) |
 
+Error detail strings (CLI stderr / MCP `data`) include recovery hints;
+the codes above are the stable contract, the prose is not.
+
 ## 3. MCP tool surface
 
 The `agentbus-stdio` shim exposes nine MCP tools over a synchronous JSON-RPC
 line loop on stdin/stdout. It opens the store directly — no daemon or socket.
 See [fr:08-mcp-shim](../fr/08-mcp-shim.md) for the full specification.
+
+The shim is the fallback surface for clients without skills or shell
+access; skill-capable clients drive the CLI instead (fr:16-usage-guidance).
+At `initialize` the shim returns an `instructions` string of condensed
+usage guidance; suppress or shrink it with `--instructions=none|minimal|full`
+(default `full`).
 
 | Tool | Input (required) | Purpose |
 |---|---|---|
@@ -187,6 +196,10 @@ Returns:
 ```bash
 # Register a persistent address with an on_delivery hook
 agentbus register impl --persistent --on-delivery "bellhop dispatch impl"
+# {"ok": true}
+
+# Session-scoped registration without the shim: anchor to a long-lived pid
+agentbus register sess-ENG-123 --pid 48211
 # {"ok": true}
 
 # List
